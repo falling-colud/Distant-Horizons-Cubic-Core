@@ -60,6 +60,8 @@ public class LodBufferContainer implements AutoCloseable
 	public final long pos;
 	
 	public boolean buffersUploaded = false;
+	/** see {@link com.seibel.distanthorizons.core.render.QuadTree.LodRenderSection#renderOctantMask}, copied every frame */
+	public volatile int octantMask = 0;
 	
 	public IVertexBufferWrapper[] vboOpaqueWrappers;
 	public IVertexBufferWrapper[] vboTransparentWrappers;

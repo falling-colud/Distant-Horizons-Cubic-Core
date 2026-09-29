@@ -6,6 +6,7 @@ import com.seibel.distanthorizons.core.util.objects.quadTree.QuadNode;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 
 /**
@@ -22,6 +23,8 @@ public class QuadTreeTickNodeHolder
 	private final HashSet<QuadNode<LodRenderSection>> presentNodes = new HashSet<>();
 	
 	private final HashSet<QuadNode<LodRenderSection>> nodesToEnable = new HashSet<>();
+	/** see {@link LodRenderSection#renderOctantMask}, only for enabled nodes drawn in place of some of their children */
+	private final HashMap<QuadNode<LodRenderSection>, Integer> octantMaskByNode = new HashMap<>();
 	private final HashSet<QuadNode<LodRenderSection>> nodesToDisable = new HashSet<>();
 	private final ArrayList<QuadNode<LodRenderSection>> nodesToEnableDeleteChildrenList = new ArrayList<>();
 	/** see {@link #addNodeNeedingData} */
@@ -50,6 +53,7 @@ public class QuadTreeTickNodeHolder
 		this.presentNodes.clear();
 		
 		this.nodesToEnable.clear();
+		this.octantMaskByNode.clear();
 		this.nodesToDisable.clear();
 		this.nodesToEnableDeleteChildrenList.clear();
 		this.nodesNeedingDataList.clear();
@@ -89,10 +93,28 @@ public class QuadTreeTickNodeHolder
 		}
 	}
 	
+	/** Cubic levels: enables a node that is drawn in place of the children not in {@code coveredChildMask}. */
+	public void addEnableNode(QuadNode<LodRenderSection> node, int coveredChildMask)
+	{
+		this.addEnableNode(node);
+		if (this.nodesToEnable.contains(node) && coveredChildMask != 0)
+		{
+			this.octantMaskByNode.put(node, coveredChildMask);
+		}
+	}
+
+	/** @return the octant mask the node is enabled with, 0 if it's drawn whole */
+	public int getOctantMask(QuadNode<LodRenderSection> node)
+	{
+		Integer mask = this.octantMaskByNode.get(node);
+		return (mask != null) ? mask : 0;
+	}
+
 	/**  */
 	public void removeEnableAndDisableNode(QuadNode<LodRenderSection> node)
 	{
 		this.nodesToEnable.remove(node);
+		this.octantMaskByNode.remove(node);
 		this.nodesToEnableDeleteChildrenList.remove(node);
 		
 		this.presentNodes.add(node); // should already be present, but re-added just in case

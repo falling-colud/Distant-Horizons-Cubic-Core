@@ -262,7 +262,8 @@ public class RenderBufferHandler implements AutoCloseable
 					// shouldn't happen, but just in case
 					continue;
 				}
-				
+
+				bufferContainer.octantMask = renderSection.renderOctantMask;
 				this.loadedNearToFarBuffers.add(bufferContainer);
 			}
 			catch (Exception e)

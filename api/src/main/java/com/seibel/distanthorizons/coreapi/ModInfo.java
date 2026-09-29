@@ -31,7 +31,14 @@ public final class ModInfo
 	public static final String DEDICATED_SERVER_INITIAL_PATH = "dedicated_server_initial";
 	
 	/** Incremented every time any packets are added, changed or removed, with a few exceptions. */
-	public static final int PROTOCOL_VERSION = 16;
+	public static final int UPSTREAM_PROTOCOL_VERSION = 16;
+	/**
+	 * The cubic LODs build sends cubic section positions, which other builds of the same
+	 * protocol would misread, so it speaks a protocol of its own: this offset plus the upstream one
+	 * (small enough for the one byte some loaders send it in).
+	 */
+	public static final int CUBIC_PROTOCOL_VERSION_OFFSET = 100;
+	public static final int PROTOCOL_VERSION = CUBIC_PROTOCOL_VERSION_OFFSET + UPSTREAM_PROTOCOL_VERSION;
 
 	/** 
 	 * The full plugin channel name (RESOURCE_NAMESPACE:WRAPPER_PACKET_PATH) 

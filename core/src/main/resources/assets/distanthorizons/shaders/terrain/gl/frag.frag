@@ -21,6 +21,18 @@ uniform float uClipDistance = 0.0;
 // cubic levels: vertical distances are multiplied by this before being clipped, see RenderUtil.getCubicVerticalClipScale()
 uniform float uClipVerticalScale = 0.0;
 
+// cubic sections drawn in place of some of their children: bit i set means child i
+// (bit 0 +X half, bit 1 +Z half, bit 2 +Y half) draws its own space, this section is discarded there
+uniform int uOctantMask = 0;
+// half the section's size in blocks (Y is huge for sections that don't split vertically)
+uniform vec3 uOctantHalfSize = vec3(0.0);
+
+// face normals by face index: down, up, north, south, west, east
+const vec3 FACE_NORMALS[6] = vec3[6](
+    vec3(0.0, -1.0, 0.0), vec3(0.0, 1.0, 0.0),
+    vec3(0.0, 0.0, -1.0), vec3(0.0, 0.0, 1.0),
+    vec3(-1.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0));
+
 // Noise Uniforms
 uniform bool uNoiseEnabled;
 uniform int uNoiseSteps;
@@ -116,6 +128,19 @@ vec2 blockFaceUv()
 
 void main()
 {
+    if (uOctantMask != 0)
+    {
+        // a face belongs to the block behind it, that block's octant decides
+        vec3 blockPos = vBlockPos - FACE_NORMALS[int(min(vNormalIndex, 5u))] * 0.25;
+        int octant = (blockPos.x >= uOctantHalfSize.x ? 1 : 0)
+            | (blockPos.z >= uOctantHalfSize.z ? 2 : 0)
+            | (blockPos.y >= uOctantHalfSize.y ? 4 : 0);
+        if (((uOctantMask >> octant) & 1) != 0)
+        {
+            discard;
+        }
+    }
+
     fragColor = vertexColor;
     
     if (vTextureTileId != 0u)

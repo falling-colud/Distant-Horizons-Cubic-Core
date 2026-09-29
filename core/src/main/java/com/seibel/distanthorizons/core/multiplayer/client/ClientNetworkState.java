@@ -107,7 +107,13 @@ public class ClientNetworkState implements Closeable
 			{
 				this.closestProtocolVersion = event.protocolVersion;
 				
-				if (ModInfo.PROTOCOL_VERSION < event.protocolVersion)
+				boolean cubicBuildMismatch = (event.protocolVersion >= ModInfo.CUBIC_PROTOCOL_VERSION_OFFSET)
+					!= (ModInfo.PROTOCOL_VERSION >= ModInfo.CUBIC_PROTOCOL_VERSION_OFFSET);
+				if (cubicBuildMismatch)
+				{
+					ClientApi.INSTANCE.queueSlowChatMessage(MinecraftTextFormat.ORANGE + "Distant Horizons: only one of this game and the server has the cubic LODs build. Use the same build on both to receive LODs on this server.");
+				}
+				else if (ModInfo.PROTOCOL_VERSION < event.protocolVersion)
 				{
 					ClientApi.INSTANCE.queueSlowChatMessage(MinecraftTextFormat.ORANGE + "Distant Horizons: Your mod is outdated. Update to receive LODs on this server.");
 				}

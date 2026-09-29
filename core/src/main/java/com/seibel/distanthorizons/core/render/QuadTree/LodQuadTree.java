@@ -84,6 +84,14 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	 * before the pass is ended so the next one starts from where the camera is now, in blocks.
 	 */
 	private static final int STALE_QUEUING_PASS_DISTANCE_IN_BLOCKS = 256;
+
+	/**
+	 * Set every frame by the renderer: whether the program drawing the LODs discards the octants
+	 * of a cubic section its children draw (see {@link LodRenderSection#renderOctantMask}).
+	 * DH's own terrain program does, programs of other mods (shader packs) don't; without it a cubic
+	 * section drawn in place of missing children replaces all of them, as in 2D levels.
+	 */
+	public static volatile boolean cubicOctantMasksSupported = false;
 	
 	
 	public final int blockRenderDistanceDiameter;
@@ -404,14 +412,16 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		{
 			// shouldn't happen, but just in case
 			if (node == null || node.value == null) { continue; }
-			
+
+			node.value.renderOctantMask = this.tickNodeHolder.getOctantMask(node);
 			node.value.setRenderingEnabled(true);
 			this.altEnabledSections.add(node.value);
 		}
 		for (QuadNode<LodRenderSection> node : this.tickNodeHolder.getEnableDeleteChildrenNodes())
 		{
 			if (node == null || node.value == null) { continue; }
-			
+
+			node.value.renderOctantMask = 0;
 			node.value.setRenderingEnabled(true);
 			this.altEnabledSections.add(node.value);
 		}
@@ -693,11 +703,12 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		// recursively update each child node
 		int childNodeRenderCount = 0;
 		int childCount = DhSectionPos.getChildCount(quadNode.sectionPos);
+		int coveredChildMask = 0;
 		for (int i = 0; i < childCount; i++)
 		{
 			long childPos = DhSectionPos.getChildByIndex(quadNode.sectionPos, i);
 			QuadNode<LodRenderSection> childNode = quadNode.getChildByIndex(i);
-			
+
 			boolean childCanRender = this.recursivelyUpdateRenderSectionNode(
 				playerPos,
 				rootNode, quadNode, childNode, childPos);
@@ -705,6 +716,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			{
 				// node can be rendered
 				childNodeRenderCount++;
+				coveredChildMask |= (1 << i);
 			}
 		}
 		
@@ -729,23 +741,72 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		}
 		else
 		{
+			boolean cubic = DhSectionPos.isCubic(quadNode.sectionPos);
 			boolean nodeCanRender = quadNode.value != null
 									&& quadNode.value.canRender()
 									// A cubic section only stands in for its children when its own data is complete.
 									// One that only holds what some of its children merged into it would replace
-									// them all with those parts (a section is drawn whole, an 8-way split is rarely
-									// complete across a tall level); its children that can render are drawn
-									// instead and only the space of the missing ones stays empty until generated.
-									&& (!DhSectionPos.isCubic(quadNode.sectionPos) || quadNode.value.dataComplete);
+									// them with those parts; its children that can render are drawn instead
+									// and it is generated, so it can cover the missing ones soon.
+									&& (!cubic || quadNode.value.dataComplete);
 			if (nodeCanRender)
 			{
-				// not all child positions are loaded yet, this one should be rendered instead
-				this.tickNodeHolder.addEnableNode(quadNode);
-				this.recursivelyDisableChildNodes(quadNode);
+				if (cubic && childCount == 8)
+				{
+					// Only cut along the vertical middle planes: a child pair above each other is
+					// drawn by this section together unless both can draw themselves. A horizontal cut
+					// would open the terrain runs crossing it, which have no face there.
+					for (int i = 0; i < 4; i++)
+					{
+						int pairMask = (1 << i) | (1 << (i + 4));
+						if ((coveredChildMask & pairMask) != pairMask)
+						{
+							coveredChildMask &= ~pairMask;
+						}
+					}
+				}
+				
+				if (cubic
+					&& cubicOctantMasksSupported
+					&& coveredChildMask != 0)
+				{
+					// Drawn only in the octants of the children that can't render yet: the others keep
+					// their full detail (with 8 children over a tall level one missing child is common,
+					// replacing all of them would coarsen the terrain around the camera for as long).
+					for (int i = 0; i < childCount; i++)
+					{
+						if ((coveredChildMask & (1 << i)) == 0)
+						{
+							QuadNode<LodRenderSection> childNode = quadNode.getChildByIndex(i);
+							if (childNode != null)
+							{
+								// whatever part of this child could render is drawn by this section instead
+								this.tickNodeHolder.removeEnableAndDisableNode(childNode);
+								this.recursivelyDisableChildNodes(childNode);
+							}
+						}
+					}
+					this.tickNodeHolder.addEnableNode(quadNode, coveredChildMask);
+				}
+				else
+				{
+					// not all child positions are loaded yet, this one should be rendered instead
+					this.tickNodeHolder.addEnableNode(quadNode);
+					this.recursivelyDisableChildNodes(quadNode);
+				}
 			}
 			else
 			{
 				this.tickNodeHolder.addDisableNode(quadNode);
+
+				if (cubic
+					&& quadNode.value != null
+					&& !quadNode.value.dataComplete)
+				{
+					// Generating this one section covers the space of all its missing children
+					// long before they are all generated themselves.
+					this.tickNodeHolder.addNodeNeedingData(quadNode);
+				}
 			}
 
 			return nodeCanRender;

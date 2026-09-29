@@ -167,11 +167,35 @@ public class ColumnBox
 					&& !isTopTransparent;
 			if (onCubicTop)
 			{
-				// covered by an opaque block at the bottom of the section above
-				skipTop = RenderDataPointUtil.doesDataPointExist(aboveBoundaryData)
+				boolean aboveAtBoundary = RenderDataPointUtil.doesDataPointExist(aboveBoundaryData)
 					&& !RenderDataPointUtil.hasZeroHeight(aboveBoundaryData)
-					&& RenderDataPointUtil.getYMin(aboveBoundaryData) == 0
+					&& RenderDataPointUtil.getYMin(aboveBoundaryData) == 0;
+				boolean aboveOpaque = aboveAtBoundary
 					&& !(RenderDataPointUtil.getAlpha(aboveBoundaryData) < 255 && transparencyEnabled);
+				if (aboveOpaque)
+				{
+					// Covered by an opaque block at the bottom of the section above, at this detail level.
+					// The section drawn above may be of another detail level whose blocks differ there
+					// (detail shells meet at vertical boundaries too), and a face left out would show as a hole.
+					// As on the horizontal borders of sections, the face is kept under a thin, lit block
+					// (the surface is right there), lit like it; under a tall or unlit one it can't be seen.
+					int aboveHeight = RenderDataPointUtil.getYMax(aboveBoundaryData) - RenderDataPointUtil.getYMin(aboveBoundaryData);
+					boolean aboveLit = RenderDataPointUtil.getLightSky(aboveBoundaryData) != LodUtil.MIN_MC_LIGHT
+						|| RenderDataPointUtil.getLightBlock(aboveBoundaryData) != LodUtil.MIN_MC_LIGHT;
+					skipTop = !aboveLit
+						|| aboveHeight > CUBIC_BOUNDARY_OVERDRAW_HEIGHT_IN_COLUMNS * blockWidth;
+					if (!skipTop)
+					{
+						skyLightTop = RenderDataPointUtil.getLightSky(aboveBoundaryData);
+					}
+				}
+				else
+				{
+					// open above (air, or nothing known yet), unless more of the same
+					// transparent block continues there (no sheets inside deep water)
+					skipTop = aboveAtBoundary
+						&& continuesSameTransparentBlock(isTransparent, irisBlockMaterialId, aboveBoundaryData);
+				}
 			}
 			
 			if (!skipTop)
@@ -192,11 +216,13 @@ public class ColumnBox
 					&& !isBottomTransparent;
 			if (onCubicBottom)
 			{
-				// resting on an opaque block at the top of the section below
+				// resting on an opaque block at the top of the section below,
+				// or on more of the same transparent block
 				skipBottom = RenderDataPointUtil.doesDataPointExist(belowBoundaryData)
 					&& !RenderDataPointUtil.hasZeroHeight(belowBoundaryData)
 					&& RenderDataPointUtil.getYMax(belowBoundaryData) == cubicSectionHeight
-					&& !(RenderDataPointUtil.getAlpha(belowBoundaryData) < 255 && transparencyEnabled);
+					&& (!(RenderDataPointUtil.getAlpha(belowBoundaryData) < 255 && transparencyEnabled)
+						|| continuesSameTransparentBlock(isTransparent, irisBlockMaterialId, belowBoundaryData));
 			}
 			if (!skipBottom)
 			{
@@ -238,7 +264,7 @@ public class ColumnBox
 				makeAdjVerticalQuad(
 					builder, phantomArrayCheckout, clientLevelWrapper,
 					adjCol, faceTileIdsByDirectionOrdinal,
-					adjSameDetailLevel, caveCullingMaxY, EDhDirection.NORTH, 
+					adjSameDetailLevel, caveCullingMaxY, cubicSectionHeight != 0, EDhDirection.NORTH, 
 					minX, minY, minZ, blockWidth, yHeight,
 					color, irisBlockMaterialId, blockLight);
 			}
@@ -265,7 +291,7 @@ public class ColumnBox
 				makeAdjVerticalQuad(
 					builder, phantomArrayCheckout, clientLevelWrapper,
 					adjCol, faceTileIdsByDirectionOrdinal,
-					adjSameDetailLevel, caveCullingMaxY, EDhDirection.SOUTH,
+					adjSameDetailLevel, caveCullingMaxY, cubicSectionHeight != 0, EDhDirection.SOUTH,
 					minX, minY, maxZ, blockWidth, yHeight,
 					color, irisBlockMaterialId, blockLight);
 			}
@@ -292,7 +318,7 @@ public class ColumnBox
 				makeAdjVerticalQuad(
 					builder, phantomArrayCheckout, clientLevelWrapper,
 					adjCol, faceTileIdsByDirectionOrdinal,
-					adjSameDetailLevel, caveCullingMaxY, EDhDirection.WEST, 
+					adjSameDetailLevel, caveCullingMaxY, cubicSectionHeight != 0, EDhDirection.WEST, 
 					minX, minY, minZ, blockWidth, yHeight,
 					color, irisBlockMaterialId, blockLight);
 			}
@@ -319,17 +345,36 @@ public class ColumnBox
 				makeAdjVerticalQuad(
 					builder, phantomArrayCheckout, clientLevelWrapper,
 					adjCol, faceTileIdsByDirectionOrdinal,
-					adjSameDetailLevel, caveCullingMaxY, EDhDirection.EAST, 
+					adjSameDetailLevel, caveCullingMaxY, cubicSectionHeight != 0, EDhDirection.EAST, 
 					maxX, minY, minZ, blockWidth, yHeight,
 					color, irisBlockMaterialId, blockLight);
 			}
 		}
 	}
 	
+	/**
+	 * Cubic sections: how tall (in LOD columns widths) a lit opaque block at the bottom of the section above
+	 * may be for the face under it to be drawn anyway, see the top face in {@link #addBoxQuadsToBuilder}.
+	 */
+	private static final int CUBIC_BOUNDARY_OVERDRAW_HEIGHT_IN_COLUMNS = 8;
+	
+	/**
+	 * Cubic sections: whether the neighbouring section's boundary block continues this transparent block
+	 * (water above or below water). As between columns, no face is drawn between them. Air (which is
+	 * invisible, not transparent) doesn't count, the water surface under it is drawn.
+	 */
+	private static boolean continuesSameTransparentBlock(boolean isTransparent, byte irisBlockMaterialId, long boundaryData)
+	{
+		byte boundaryMaterial = RenderDataPointUtil.getBlockMaterialId(boundaryData);
+		return isTransparent
+			&& boundaryMaterial == irisBlockMaterialId
+			&& boundaryMaterial != EDhApiBlockMaterial.AIR.index;
+	}
+	
 	private static void makeAdjVerticalQuad(
 		LodQuadBuilder builder, PhantomArrayListCheckout phantomArrayCheckout, IClientLevelWrapper clientLevelWrapper,
 		@NotNull ColumnRenderView adjColumnView, short @Nullable [] faceTileIdsByDirectionOrdinal,
-		boolean adjacentIsSameDetailLevel, int caveCullingMaxY, EDhDirection direction,
+		boolean adjacentIsSameDetailLevel, int caveCullingMaxY, boolean cubic, EDhDirection direction,
 		short x, short yMin, short z, short horizontalBlockWidth, short ySize,
 		int color, byte irisBlockMaterialId, byte blockLight)
 	{
@@ -349,6 +394,17 @@ public class ColumnBox
 		if (adjColumnView.size == 0
 			|| RenderDataPointUtil.hasZeroHeight(adjColumnView.get(0)))
 		{
+			if (cubic
+				&& ColorUtil.getAlpha(color) < 255
+				&& Config.Client.Advanced.Graphics.Quality.transparency.get() == EDhApiTransparency.COMPLETE)
+			{
+				// Nothing is known next to this transparent face (the neighbouring cubic section hasn't
+				// been generated or merged at this detail yet): drawn at full light it shows as a bright
+				// wall in the water from far away, left out the water surface stays flat. Opaque faces
+				// are still drawn so terrain edges stay closed.
+				return;
+			}
+			
 			builder.addQuadAdj(
 				direction, 
 				x, yMin, z, 
@@ -441,6 +497,15 @@ public class ColumnBox
 					|| (direction == EDhDirection.NORTH && z == 0)
 					|| (direction == EDhDirection.EAST && x == ((horizontalBlockWidth) * (ColumnRenderSource.WIDTH)))
 					|| (direction == EDhDirection.SOUTH && z == ((horizontalBlockWidth) * (ColumnRenderSource.WIDTH)));
+				if (cubic && !onBorder)
+				{
+					// A cubic section can be drawn in place of only some of its children, cut along
+					// its vertical middle planes (see LodQuadTree.cubicOctantMasksSupported): the
+					// faces there border a child of another detail level then, like section borders.
+					int halfWidth = (horizontalBlockWidth * ColumnRenderSource.WIDTH) / 2;
+					onBorder = ((direction == EDhDirection.EAST || direction == EDhDirection.WEST) && x == halfWidth)
+						|| ((direction == EDhDirection.SOUTH || direction == EDhDirection.NORTH) && z == halfWidth);
+				}
 				
 				boolean isLit =
 					RenderDataPointUtil.getLightSky(adjPoint) != LodUtil.MIN_MC_LIGHT

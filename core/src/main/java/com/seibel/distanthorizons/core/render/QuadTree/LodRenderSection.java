@@ -100,6 +100,12 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 	 * Updated whenever the render data is built.
 	 */
 	public volatile boolean dataComplete = false;
+	/**
+	 * Cubic levels only: the children (bit i: child index i) that draw their own space while this
+	 * section is drawn in place of the others; this section is discarded in their octants.
+	 * 0 when the section is drawn whole. Set by the {@link LodQuadTree} every tick.
+	 */
+	public volatile int renderOctantMask = 0;
 	
 	/** this reference is necessary so we can determine what VBO to render */
 	public LodBufferContainer renderBufferContainer; 

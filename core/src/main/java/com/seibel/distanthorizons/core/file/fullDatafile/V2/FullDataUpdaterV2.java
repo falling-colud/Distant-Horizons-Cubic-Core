@@ -144,7 +144,11 @@ public class FullDataUpdaterV2 implements IDebugRenderable, AutoCloseable
 						// Only update sky lighting at the lowest level,
 						// everything above that gets that generated lighting for free
 						// via downsampling.
-						if (DhSectionPos.getDetailLevel(updatePos) == DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL)
+						// Cubic sections are skipped: the baking lights each column from its top
+						// data point, which in a cubic section is usually under the section above,
+						// their data comes with the sky light of the real level.
+						if (DhSectionPos.getDetailLevel(updatePos) == DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL
+							&& !DhSectionPos.isCubic(updatePos))
 						{
 							// Block lights should have been populated at the chunkWrapper stage.
 							// Sky lights must be re-calculated at this stage in order to prevent an issue

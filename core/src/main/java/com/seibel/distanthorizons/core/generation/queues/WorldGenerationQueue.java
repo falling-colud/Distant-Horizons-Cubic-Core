@@ -21,6 +21,7 @@ package com.seibel.distanthorizons.core.generation.queues;
 
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiDistantGeneratorMode;
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiGeneratorPlan;
+import com.seibel.distanthorizons.api.interfaces.override.worldGenerator.IDhApiCubicWorldGenerator;
 import com.seibel.distanthorizons.api.interfaces.override.worldGenerator.IDhApiWorldGenerator;
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiWorldGeneratorReturnType;
 import com.seibel.distanthorizons.api.objects.data.DhApiChunk;
@@ -88,6 +89,8 @@ public class WorldGenerationQueue implements IFullDataSourceRetrievalQueue, IDeb
 	private final ExecutorService queueingThread = ThreadUtil.makeSingleThreadPool("World Gen Queue");
 	private boolean generationQueueRunning = false;
 	private DhBlockPos2D generationTargetPos = DhBlockPos2D.ZERO;
+	/** only used by cubic levels */
+	private volatile int generationTargetBlockY = 0;
 		
 	/** just used for rendering to the F3 menu */
 	private long estimatedRemainingChunkCount = 0;
@@ -218,6 +221,9 @@ public class WorldGenerationQueue implements IFullDataSourceRetrievalQueue, IDeb
 	//===============//
 	
 	@Override
+	public void setTargetBlockY(int targetBlockY) { this.generationTargetBlockY = targetBlockY; }
+
+	@Override
 	public void startAndSetTargetPos(DhBlockPos2D targetPos)
 	{
 		// update the target pos
@@ -299,6 +305,10 @@ public class WorldGenerationQueue implements IFullDataSourceRetrievalQueue, IDeb
 			{ 
 				DataSourceRetrievalTask task = entry.getValue();
 				int distance = DhSectionPos.getCenterBlockPos(task.pos).chebyshevDist(targetPos);
+				if (DhSectionPos.isCubic(task.pos))
+				{
+					distance = Math.max(distance, Math.abs(DhSectionPos.getCubicCenterBlockY(task.pos) - this.generationTargetBlockY));
+				}
 				distance /= DhSectionPos.getDetailLevel(task.pos); // generate low detail LODs first 
 				return new TaskDistancePair(entry.getValue(), distance);
 			},
@@ -587,19 +597,46 @@ public class WorldGenerationQueue implements IFullDataSourceRetrievalQueue, IDeb
 		pooledDataSource.setRunApiSetterValidation(this.generator.runApiValidation());
 		
 		// only apply to children if we aren't at the bottom of the tree
-		pooledDataSource.applyToChildren = DhSectionPos.getDetailLevel(pooledDataSource.getPos()) > DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL;
+		// (cubic levels never push data down, see FullDataUpdatePropagatorV2)
+		pooledDataSource.applyToChildren = DhSectionPos.getDetailLevel(pooledDataSource.getPos()) > DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL
+			&& !DhSectionPos.isCubic(pooledDataSource.getPos());
 		// apply to parents up to the top of the tree
 		pooledDataSource.applyToParent = DhSectionPos.getDetailLevel(pooledDataSource.getPos()) < FullDataSourceProviderV2.ROOT_SECTION_DETAIL_LEVEL;
-		
-		CompletableFuture<Void> lodGenFuture = this.generator.generateLod(
-			chunkPosMin.getX(), chunkPosMin.getZ(),
-			DhSectionPos.getX(task.pos), DhSectionPos.getZ(task.pos),
-			(byte) (DhSectionPos.getDetailLevel(task.pos) - DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL),
-			pooledDataSource,
-			generatorMode,
-			ThreadPoolUtil.getWorldGenExecutor(),
-			(IDhApiFullDataSource apiDataSource) -> { }
-		);
+
+		CompletableFuture<Void> lodGenFuture;
+		if (DhSectionPos.isCubic(task.pos))
+		{
+			if (!(this.generator instanceof IDhApiCubicWorldGenerator))
+			{
+				// shouldn't happen, cubic levels only start generating with a cubic generator bound
+				pooledDataSource.close();
+				returnFuture.completeExceptionally(new IllegalStateException("The generator [" + this.generator.getClass().getName() + "] can't generate cubic LODs."));
+				return returnFuture;
+			}
+
+			lodGenFuture = ((IDhApiCubicWorldGenerator) this.generator).generateCubicLod(
+				chunkPosMin.getX(), chunkPosMin.getZ(),
+				DhSectionPos.getCubicMinBlockY(task.pos), DhSectionPos.getCubicBlockHeight(task.pos),
+				DhSectionPos.getX(task.pos), DhSectionPos.getY(task.pos), DhSectionPos.getZ(task.pos),
+				(byte) (DhSectionPos.getDetailLevel(task.pos) - DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL),
+				pooledDataSource,
+				generatorMode,
+				ThreadPoolUtil.getWorldGenExecutor(),
+				(IDhApiFullDataSource apiDataSource) -> { }
+			);
+		}
+		else
+		{
+			lodGenFuture = this.generator.generateLod(
+				chunkPosMin.getX(), chunkPosMin.getZ(),
+				DhSectionPos.getX(task.pos), DhSectionPos.getZ(task.pos),
+				(byte) (DhSectionPos.getDetailLevel(task.pos) - DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL),
+				pooledDataSource,
+				generatorMode,
+				ThreadPoolUtil.getWorldGenExecutor(),
+				(IDhApiFullDataSource apiDataSource) -> { }
+			);
+		}
 		
 		
 		lodGenFuture.exceptionally((throwable) ->

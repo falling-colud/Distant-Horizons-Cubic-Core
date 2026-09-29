@@ -127,6 +127,10 @@
     "Vertical Quality",
   "distanthorizons.config.client.advanced.graphics.quality.verticalQuality.@tooltip":
     "How well LODs represent overhangs, caves, cliffsides, etc.\n\nHigher options will increase memory and GPU usage.",
+  "distanthorizons.config.client.advanced.graphics.quality.cubicVerticalRenderDistanceRadius":
+    "Cubic Vertical Render Distance",
+  "distanthorizons.config.client.advanced.graphics.quality.cubicVerticalRenderDistanceRadius.@tooltip":
+    "Only used in cubic worlds (from cubic chunks mods).\nHow far above and below the camera LODs are rendered, measured in chunks.\nLower values generate and render less.\n\n0 = the same as the LOD Chunk Render Distance Radius.",
   "distanthorizons.config.client.advanced.graphics.quality.useCameraPositionForQualityDropOff":
     "Use Camera Pos for Quality Drop-Off",
   "distanthorizons.config.client.advanced.graphics.quality.useCameraPositionForQualityDropOff.@tooltip":

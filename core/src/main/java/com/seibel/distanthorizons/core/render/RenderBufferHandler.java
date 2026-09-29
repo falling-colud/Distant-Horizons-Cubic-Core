@@ -110,9 +110,15 @@ public class RenderBufferHandler implements AutoCloseable
 		DhBlockPos2D bPos = DhSectionPos.getCenterBlockPos(loadedBufferB.pos);
 		
 		DhBlockPos2D centerPos = this.lodQuadTree.getCenterBlockPos();
-		
+
 		int aManhattanDistance = aPos.manhattanDist(centerPos);
 		int bManhattanDistance = bPos.manhattanDist(centerPos);
+		if (DhSectionPos.isCubic(loadedBufferA.pos))
+		{
+			int centerY = this.lodQuadTree.getPlayerBlockY();
+			aManhattanDistance += Math.abs(DhSectionPos.getCubicCenterBlockY(loadedBufferA.pos) - centerY);
+			bManhattanDistance += Math.abs(DhSectionPos.getCubicCenterBlockY(loadedBufferB.pos) - centerY);
+		}
 		return aManhattanDistance - bManhattanDistance;
 	}
 	
@@ -221,7 +227,11 @@ public class RenderBufferHandler implements AutoCloseable
 					int blockMinZ = DhSectionPos.getMinCornerBlockZ(renderSection.pos);
 					int blockWidth = DhSectionPos.getBlockWidth(renderSection.pos);
 					byte detailLevel = DhSectionPos.getDetailLevel(renderSection.pos);
-					if (!frustum.intersects(blockMinX, blockMinZ, blockWidth, detailLevel))
+					boolean visible = DhSectionPos.isCubic(renderSection.pos)
+						// cubic sections only cover part of the level's height
+						? frustum.intersects(blockMinX, DhSectionPos.getCubicMinBlockY(renderSection.pos), blockMinZ, blockWidth, DhSectionPos.getCubicBlockHeight(renderSection.pos), detailLevel)
+						: frustum.intersects(blockMinX, blockMinZ, blockWidth, detailLevel);
+					if (!visible)
 					{
 						if (isShadowPass)
 						{

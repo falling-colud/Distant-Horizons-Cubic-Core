@@ -63,8 +63,11 @@ public abstract class AbstractLodRequestState
 	//region
 	
 	/** @param targetPosForRequest the position that world generation should be centered around */
-	public void startRequestQueueAndSetTargetPos(DhBlockPos2D targetPosForRequest)
+	public void startRequestQueueAndSetTargetPos(DhBlockPos2D targetPosForRequest) { this.startRequestQueueAndSetTargetPos(targetPosForRequest, 0); }
+	/** @param targetBlockY only used by cubic levels */
+	public void startRequestQueueAndSetTargetPos(DhBlockPos2D targetPosForRequest, int targetBlockY)
 	{
+		this.retrievalQueue.setTargetBlockY(targetBlockY);
 		this.retrievalQueue.startAndSetTargetPos(targetPosForRequest);
 		this.startProgressUpdateThread();
 	}

@@ -19,6 +19,8 @@
 
 package com.seibel.distanthorizons.core.api.internal;
 
+import com.seibel.distanthorizons.api.methods.cubic.DhApiCubic;
+import com.seibel.distanthorizons.core.api.internal.chunkUpdating.CubicChunkUpdater;
 import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiWorldLoadEvent;
 import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiWorldUnloadEvent;
 import com.seibel.distanthorizons.core.api.internal.chunkUpdating.ChunkUpdateData;
@@ -81,6 +83,11 @@ public class SharedApi
 	//region constructor
 	
 	private SharedApi() { }
+
+	static
+	{
+		DhApiCubic.Internal.setChunkUpdater(CubicChunkUpdater.INSTANCE);
+	}
 	
 	//endregion
 	
@@ -276,6 +283,13 @@ public class SharedApi
 			}
 		}
 		
+		// Cubic levels get their chunks through DhApiCubic.updateCubicChunk, only the complete parts of them:
+		// a cubic chunk column is mostly unloaded cubes, which would replace the LODs with air.
+		if (dhLevel.isCubic())
+		{
+			return;
+		}
+
 		// ignore chunk updates for non-rendered levels
 		String dimName = dhLevel.getLevelWrapper().getDimensionName();
 		if (IgnoredDimensionCsvHandler.INSTANCE.dimensionNameShouldBeIgnored(dimName))

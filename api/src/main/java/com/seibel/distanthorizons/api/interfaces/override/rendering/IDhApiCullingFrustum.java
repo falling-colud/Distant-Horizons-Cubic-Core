@@ -54,5 +54,17 @@ public interface IDhApiCullingFrustum extends IDhApiOverrideable
 	 * @see EDhApiDetailLevel
 	 */
 	boolean intersects(int lodBlockPosMinX, int lodBlockPosMinZ, int lodBlockWidth, int lodDetailLevel);
+
+	/**
+	 * Like {@link #intersects(int, int, int, int)}, for LODs that only cover part of the world's height
+	 * (the cubic LODs of cubic chunks levels). <br>
+	 * By default this ignores the height and tests the whole column.
+	 *
+	 * @param lodBlockPosMinY the lowest block Y of the LOD
+	 * @param lodBlockHeight how many blocks tall the LOD is
+	 * @since API 7.2.0 (cubic)
+	 */
+	default boolean intersects(int lodBlockPosMinX, int lodBlockPosMinY, int lodBlockPosMinZ, int lodBlockWidth, int lodBlockHeight, int lodDetailLevel)
+	{ return this.intersects(lodBlockPosMinX, lodBlockPosMinZ, lodBlockWidth, lodDetailLevel); }
 	
 }

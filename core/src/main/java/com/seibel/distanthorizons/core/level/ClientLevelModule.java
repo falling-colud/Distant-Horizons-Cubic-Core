@@ -98,7 +98,8 @@ public class ClientLevelModule implements Closeable, IDataSourceUpdateListenerFu
 		}
 		
 		// recreate the RenderState if the render distance changes
-		if (clientRenderState.viewDiameterInBlocks != ClientRenderState.getViewDiameterInBlocks())
+		if (clientRenderState.viewDiameterInBlocks != ClientRenderState.getViewDiameterInBlocks()
+			|| clientRenderState.verticalRadiusInBlocks != ClientRenderState.getVerticalRadiusInBlocks())
 		{
 			// close the older renderer
 			clientRenderState.close();
@@ -111,19 +112,22 @@ public class ClientLevelModule implements Closeable, IDataSourceUpdateListenerFu
 		
 		
 		DhBlockPos2D quadTreeTickBlockPos;
+		int quadTreeTickBlockY;
 		if (Config.Client.Advanced.Graphics.Quality.useCameraPositionForQualityDropOff.get())
 		{
 			// use camera position allow free cam mods work better
 			DhVec3d cameraDoublePos = MC_RENDER.getCameraExactPosition();
-			quadTreeTickBlockPos = new DhBlockPos2D((int)cameraDoublePos.x, (int)cameraDoublePos.z);
+			quadTreeTickBlockPos = new DhBlockPos2D((int) Math.floor(cameraDoublePos.x), (int) Math.floor(cameraDoublePos.z));
+			quadTreeTickBlockY = (int) Math.floor(cameraDoublePos.y);
 		}
 		else
 		{
 			// player position allows multi-cam mods to work better
 			quadTreeTickBlockPos = new DhBlockPos2D(MC_CLIENT.getPlayerBlockPos());
+			quadTreeTickBlockY = MC_CLIENT.getPlayerBlockPos().getY();
 		}
-		
-		clientRenderState.quadtree.tryTick(quadTreeTickBlockPos);
+
+		clientRenderState.quadtree.tryTick(quadTreeTickBlockPos, quadTreeTickBlockY);
 	}
 	
 	
@@ -243,7 +247,9 @@ public class ClientLevelModule implements Closeable, IDataSourceUpdateListenerFu
 		public final RenderBufferHandler renderBufferHandler;
 		
 		public final int viewDiameterInBlocks;
-		
+		/** how far above and below the camera the tree reaches in a cubic level */
+		public final int verticalRadiusInBlocks;
+
 		
 		
 		//=============//
@@ -255,12 +261,21 @@ public class ClientLevelModule implements Closeable, IDataSourceUpdateListenerFu
 				FullDataSourceProviderV2 fullDataSourceProvider)
 		{
 			this.viewDiameterInBlocks = getViewDiameterInBlocks();
-			
+			this.verticalRadiusInBlocks = getVerticalRadiusInBlocks();
+
+			int initialBlockY = 0;
+			if (fullDataSourceProvider.cubic
+				&& MC_CLIENT.playerExists())
+			{
+				// a cubic tree only holds the layers around its center, starting at the player avoids rebuilding them on the first tick
+				initialBlockY = MC_CLIENT.getPlayerBlockPos().getY();
+			}
+
 			this.quadtree = new LodQuadTree(
 				dhClientLevel,
-				this.viewDiameterInBlocks,
+				this.viewDiameterInBlocks, this.verticalRadiusInBlocks,
 				// initial position is (0,0) just in case the player hasn't loaded in yet, the tree will be moved once the level starts ticking
-				0, 0,
+				0, initialBlockY, 0,
 				fullDataSourceProvider);
 			
 			this.renderBufferHandler = new RenderBufferHandler(this.quadtree);
@@ -270,11 +285,25 @@ public class ClientLevelModule implements Closeable, IDataSourceUpdateListenerFu
 		 * Used both during setup and
 		 * to determine if the render distance changed.
 		 */
-		public static int getViewDiameterInBlocks() 
-		{ 
-			return Config.Client.Advanced.Graphics.Quality.lodChunkRenderDistanceRadius.get() 
-				* LodUtil.CHUNK_WIDTH 
-				* 2; 
+		public static int getViewDiameterInBlocks()
+		{
+			return Config.Client.Advanced.Graphics.Quality.lodChunkRenderDistanceRadius.get()
+				* LodUtil.CHUNK_WIDTH
+				* 2;
+		}
+
+		/**
+		 * How far above and below the camera a cubic level's tree reaches.
+		 * Used both during setup and to determine if the render distance changed.
+		 */
+		public static int getVerticalRadiusInBlocks()
+		{
+			int verticalChunkRadius = Config.Client.Advanced.Graphics.Quality.cubicVerticalRenderDistanceRadius.get();
+			if (verticalChunkRadius <= 0)
+			{
+				verticalChunkRadius = Config.Client.Advanced.Graphics.Quality.lodChunkRenderDistanceRadius.get();
+			}
+			return verticalChunkRadius * LodUtil.CHUNK_WIDTH;
 		}
 		
 		

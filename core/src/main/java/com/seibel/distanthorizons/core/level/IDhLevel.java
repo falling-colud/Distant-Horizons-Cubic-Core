@@ -80,6 +80,13 @@ public interface IDhLevel extends AutoCloseable, GeneratedFullDataSourceProvider
 	BeaconBeamRepo getBeaconBeamRepo();
 	
 	FullDataSourceProviderV2 getFullDataProvider();
+
+	/** @return true if this level's LODs are cubic, see {@link ILevelWrapper#isCubicLod()} */
+	default boolean isCubic()
+	{
+		FullDataSourceProviderV2 provider = this.getFullDataProvider();
+		return (provider != null) ? provider.cubic : this.getLevelWrapper().isCubicLod();
+	}
 	
 	ISaveStructure getSaveStructure();
 	

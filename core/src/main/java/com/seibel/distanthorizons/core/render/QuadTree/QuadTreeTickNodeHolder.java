@@ -24,7 +24,9 @@ public class QuadTreeTickNodeHolder
 	private final HashSet<QuadNode<LodRenderSection>> nodesToEnable = new HashSet<>();
 	private final HashSet<QuadNode<LodRenderSection>> nodesToDisable = new HashSet<>();
 	private final ArrayList<QuadNode<LodRenderSection>> nodesToEnableDeleteChildrenList = new ArrayList<>();
-	
+	/** see {@link #addNodeNeedingData} */
+	private final ArrayList<QuadNode<LodRenderSection>> nodesNeedingDataList = new ArrayList<>();
+
 	/** 
 	 * not included in {@link #clear()} to allow for use on the {@link LodQuadTree}'s
 	 * queuing thread.
@@ -50,6 +52,7 @@ public class QuadTreeTickNodeHolder
 		this.nodesToEnable.clear();
 		this.nodesToDisable.clear();
 		this.nodesToEnableDeleteChildrenList.clear();
+		this.nodesNeedingDataList.clear();
 	}
 	
 	
@@ -119,17 +122,29 @@ public class QuadTreeTickNodeHolder
 		}
 	}
 	public ArrayList<QuadNode<LodRenderSection>> getEnableDeleteChildrenNodes() { return this.nodesToEnableDeleteChildrenList; }
-	public ArrayList<QuadNode<LodRenderSection>> getWorldGenNodesNearToFar(DhBlockPos2D centerPos) 
+	public ArrayList<QuadNode<LodRenderSection>> getWorldGenNodesNearToFar(DhBlockPos2D centerPos) { return this.getWorldGenNodesNearToFar(centerPos, 0); }
+	/** @param centerBlockY only used for cubic positions */
+	public ArrayList<QuadNode<LodRenderSection>> getWorldGenNodesNearToFar(DhBlockPos2D centerPos, int centerBlockY)
 	{
 		this.quadNodeNearComparator.centerPos = centerPos;
+		this.quadNodeNearComparator.centerBlockY = centerBlockY;
 		this.nodesToEnableDeleteChildrenList.sort(this.quadNodeNearComparator);
-		
-		// this 
+		this.nodesNeedingDataList.sort(this.quadNodeNearComparator);
+
+		// this
 		this.nodesForWorldGen.clear();
 		this.nodesForWorldGen.addAll(this.nodesToEnableDeleteChildrenList);
-		
+		this.nodesForWorldGen.addAll(this.nodesNeedingDataList);
+		this.nodesForWorldGen.sort(this.quadNodeNearComparator);
+
 		return this.nodesForWorldGen;
 	}
+
+	/**
+	 * Cubic levels: nodes that want to render but have no data yet.
+	 * They don't render (their parent does), so they only get their data through world generation.
+	 */
+	public void addNodeNeedingData(QuadNode<LodRenderSection> node) { this.nodesNeedingDataList.add(node); }
 	
 	///endregion
 	
@@ -144,14 +159,25 @@ public class QuadTreeTickNodeHolder
 	private static class QuadNodeNearComparator implements Comparator<QuadNode<LodRenderSection>>
 	{
 		public DhBlockPos2D centerPos = DhBlockPos2D.ZERO;
-		
+		/** only used for cubic positions */
+		public int centerBlockY = 0;
+
 		@Override
 		public int compare(QuadNode<LodRenderSection> nodeA, QuadNode<LodRenderSection> nodeB)
 		{
 			// closer LODs first
-			int aDist = DhSectionPos.getManhattanBlockDistance(nodeA.sectionPos, this.centerPos);
-			int bDist = DhSectionPos.getManhattanBlockDistance(nodeB.sectionPos, this.centerPos);
-			return Integer.compare(aDist, bDist); // smaller numbers first
+			long aDist = this.distance(nodeA.sectionPos);
+			long bDist = this.distance(nodeB.sectionPos);
+			return Long.compare(aDist, bDist); // smaller numbers first
+		}
+		private long distance(long pos)
+		{
+			long distance = DhSectionPos.getManhattanBlockDistance(pos, this.centerPos);
+			if (DhSectionPos.isCubic(pos))
+			{
+				distance += Math.abs((long) DhSectionPos.getCubicCenterBlockY(pos) - this.centerBlockY);
+			}
+			return distance;
 		}
 	}
 	

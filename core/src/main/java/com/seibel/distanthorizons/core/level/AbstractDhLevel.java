@@ -173,6 +173,12 @@ public abstract class AbstractDhLevel implements IDhLevel
 		}
 	}
 	
+	/**
+	 * Queues a cubic leaf section built from real terrain. Updates of the same section
+	 * (the 16 chunks it covers) are merged in memory before they're saved.
+	 */
+	public void queueCubicChunkDataSource(FullDataSourceV2 dataSource) { this.delayedFullDataSourceSaveCache.writeToMemoryAndQueueSave(dataSource); }
+
 	private CompletableFuture<Void> onDataSourceSaveAsync(FullDataSourceV2 fullDataSource)
 	{
 		return this.updateDataSourcesAsync(fullDataSource)

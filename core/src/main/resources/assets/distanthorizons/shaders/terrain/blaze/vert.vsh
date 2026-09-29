@@ -71,7 +71,7 @@ void main()
     
     vertexWorldPos = vPosition.xyz + (uModelOffset - uCameraPos);
     
-    float vertexYPos = vPosition.y + uWorldYOffset;
+    float vertexYPos = vPosition.y + uModelOffset.y; // the section origin, the level bottom for 2D sections and the section bottom for cubic ones
     
     uint mirco = (meta & 0xFF00u) >> 8u; // mirco offset which is a xyz 2bit value
     // 0b00 = no offset

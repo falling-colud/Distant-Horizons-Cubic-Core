@@ -120,7 +120,7 @@ public class FullDataToRenderDataTransformer
 		
 		
 		
-		final ColumnRenderSource columnSource = ColumnRenderSource.createEmpty(pos, maxVertSliceCount, levelWrapper.getMinHeight());
+		final ColumnRenderSource columnSource = ColumnRenderSource.createEmpty(pos, maxVertSliceCount, DhSectionPos.getMinBlockY(pos, levelWrapper.getMinHeight()));
 		if (fullDataSource.isEmpty)
 		{
 			return columnSource;
@@ -314,8 +314,10 @@ public class FullDataToRenderDataTransformer
 			snowLayerBlockStates.add(WRAPPER_FACTORY.deserializeBlockStateWrapperOrGetDefault("minecraft:snow_STATE_{layers:3}", levelWrapper));
 		}
 		
-		int caveCullingMaxY = Config.Client.Advanced.Graphics.Culling.caveCullingHeight.get() - levelWrapper.getMinHeight();
-		boolean caveCullingEnabled = 
+		// heights are relative to the section's bottom in cubic levels, the level's bottom otherwise
+		int dataMinBlockY = DhSectionPos.getMinBlockY(fullDataSource.getPos(), levelWrapper.getMinHeight());
+		int caveCullingMaxY = Config.Client.Advanced.Graphics.Culling.caveCullingHeight.get() - dataMinBlockY;
+		boolean caveCullingEnabled =
 			Config.Client.Advanced.Graphics.Culling.enableCaveCulling.get()
 			&& (
 				// dimensions with a ceiling will be all caves so we don't want cave culling
@@ -323,6 +325,9 @@ public class FullDataToRenderDataTransformer
 				// the end has a lot of overhangs with 0 lighting above the void, which look broken with
 				// the current cave culling logic (this could probably be improved, but just skipping it works best for now)
 				&& !levelWrapper.getDimensionType().isTheEnd()
+				// Cubic levels have caves the camera can be in at any height, dropping them here
+				// would hide every cave and cavern for good. Dark geometry is skipped when drawing instead.
+				&& !DhSectionPos.isCubic(fullDataSource.getPos())
 			);
 		
 		boolean isColumnVoid = true;
@@ -363,7 +368,7 @@ public class FullDataToRenderDataTransformer
 			int blockLight = FullDataPointUtil.getBlockLight(fullData);
 			int skyLight = FullDataPointUtil.getSkyLight(fullData);
 			
-			mutableBlockPos.setY(bottomY + levelWrapper.getMinHeight());
+			mutableBlockPos.setY(bottomY + dataMinBlockY);
 			
 			IBiomeWrapper biome;
 			IBlockStateWrapper block;

@@ -36,6 +36,7 @@ import com.seibel.distanthorizons.core.render.renderer.AbstractDebugWireframeRen
 import com.seibel.distanthorizons.core.render.renderer.IDebugRenderable;
 import com.seibel.distanthorizons.core.sql.dto.FullDataSourceV2DTO;
 import com.seibel.distanthorizons.core.sql.repo.AbstractDhRepo;
+import com.seibel.distanthorizons.core.sql.repo.CubicFullDataSourceV2Repo;
 import com.seibel.distanthorizons.core.sql.repo.FullDataSourceV2Repo;
 import com.seibel.distanthorizons.core.util.objects.DataCorruptedException;
 import com.seibel.distanthorizons.core.util.threading.ThreadPoolUtil;
@@ -86,7 +87,12 @@ public class FullDataSourceProviderV2 implements IDebugRenderable, AutoCloseable
 	
 	
 	public final FullDataSourceV2Repo repo;
-	
+	/**
+	 * true if this level's LODs are cubic: its positions are cubic {@link DhSectionPos}itions
+	 * and its data lives in the {@link CubicFullDataSourceV2Repo} table. Decided once, when the level loads.
+	 */
+	public final boolean cubic;
+
 	
 	protected final AtomicBoolean isShutdownRef = new AtomicBoolean(false);
 	protected final File saveDir;
@@ -110,7 +116,15 @@ public class FullDataSourceProviderV2 implements IDebugRenderable, AutoCloseable
 	public FullDataSourceProviderV2(IDhLevel level, ISaveStructure saveStructure, @Nullable File saveDirOverride) throws SQLException, IOException
 	{
 		this.saveDir = (saveDirOverride == null) ? saveStructure.getSaveFolder(level.getLevelWrapper()) : saveDirOverride;
-		this.repo = new FullDataSourceV2Repo(AbstractDhRepo.DEFAULT_DATABASE_TYPE, new File(this.saveDir.getPath() + File.separator + ISaveStructure.DATABASE_NAME));
+		this.cubic = level.getLevelWrapper().isCubicLod();
+		File databaseFile = new File(this.saveDir.getPath() + File.separator + ISaveStructure.DATABASE_NAME);
+		this.repo = this.cubic
+			? new CubicFullDataSourceV2Repo(AbstractDhRepo.DEFAULT_DATABASE_TYPE, databaseFile)
+			: new FullDataSourceV2Repo(AbstractDhRepo.DEFAULT_DATABASE_TYPE, databaseFile);
+		if (this.cubic)
+		{
+			LOGGER.info("Level ["+level.getLevelWrapper().getDhIdentifier()+"] uses cubic LODs.");
+		}
 		this.level = level;
 		this.levelWrapper = level.getLevelWrapper();
 		

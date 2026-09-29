@@ -109,7 +109,8 @@ public class LodBufferContainer implements AutoCloseable
 		
 		DhBlockPos minCornerBlockPos = new DhBlockPos(
 			DhSectionPos.getMinCornerBlockX(pos),
-			clientLevelWrapper.getMinHeight(),
+			// vertex heights are relative to the section's bottom in cubic levels
+			DhSectionPos.getMinBlockY(pos, clientLevelWrapper.getMinHeight()),
 			DhSectionPos.getMinCornerBlockZ(pos));
 		LodBufferContainer bufferContainer = new LodBufferContainer(pos, minCornerBlockPos);
 		

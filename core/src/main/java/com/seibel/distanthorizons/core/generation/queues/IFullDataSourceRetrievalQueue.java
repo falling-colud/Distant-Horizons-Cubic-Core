@@ -88,6 +88,9 @@ public interface IFullDataSourceRetrievalQueue extends Closeable
 	 *                  generally this will be the player's position. 
 	 * */
 	void startAndSetTargetPos(DhBlockPos2D targetPos);
+
+	/** Sets the block Y retrieval should be centered around, only used by cubic levels. */
+	default void setTargetBlockY(int targetBlockY) { }
 	
 	//endregion
 	

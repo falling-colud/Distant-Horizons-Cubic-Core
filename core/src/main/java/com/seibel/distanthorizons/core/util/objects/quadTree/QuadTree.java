@@ -122,7 +122,11 @@ public class QuadTree<T>
 		int verticalRadiusInBlocks, int levelMinBlockY, int levelMaxBlockY)
 	{ this(diameterInBlocks, blockDistanceForNodeClearing, centerBlockPos, treeLeafDetailLevel, true, centerBlockY, verticalRadiusInBlocks, levelMinBlockY, levelMaxBlockY); }
 
-	private QuadTree(
+	/** 
+	 * @param cubic if false every vertical argument is ignored 
+	 * @see QuadTree#QuadTree(int, int, DhBlockPos2D, int, byte, int, int, int) 
+	 */
+	protected QuadTree(
 		int diameterInBlocks, int blockDistanceForNodeClearing,
 		DhBlockPos2D centerBlockPos, byte treeLeafDetailLevel,
 		boolean cubic, int centerBlockY, int verticalRadiusInBlocks, int levelMinBlockY, int levelMaxBlockY)

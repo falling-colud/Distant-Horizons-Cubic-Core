@@ -228,6 +228,17 @@ public class Config
 						.addListener(ReloadLodsConfigEventHandler.DELAYED_INSTANCE)
 						.build();
 					
+					public static ConfigEntry<Integer> cubicVerticalRenderDistanceRadius = new ConfigEntry.Builder<Integer>()
+						.setMinDefaultMax(0, 0, 4096)
+						.comment(""
+							+ "Only used in levels with cubic LODs (from cubic chunks mods). \n"
+							+ "How far above and below the camera LODs are rendered, measured in chunks. \n"
+							+ "Lower values generate and render less. \n"
+							+ "\n"
+							+ "0 = the same as the LOD Chunk Render Distance Radius. \n"
+							+ "")
+						.build();
+
 					public static ConfigUISpacer cameraZoomSpacer = new ConfigUISpacer.Builder().build();
 					
 					public static ConfigEntry<Boolean> useCameraPositionForQualityDropOff = new ConfigEntry.Builder<Boolean>()

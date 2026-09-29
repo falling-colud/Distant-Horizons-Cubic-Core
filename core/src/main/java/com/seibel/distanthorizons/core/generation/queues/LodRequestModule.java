@@ -145,7 +145,7 @@ public class LodRequestModule implements Closeable
 				DhBlockPos2D targetPosForGeneration = this.onWorldGenCompleteListener.getTargetPosForGeneration();
 				if (targetPosForGeneration != null)
 				{
-					lodRequestState.startRequestQueueAndSetTargetPos(targetPosForGeneration);
+					lodRequestState.startRequestQueueAndSetTargetPos(targetPosForGeneration, this.onWorldGenCompleteListener.getTargetBlockYForGeneration());
 				}
 			}
 		}

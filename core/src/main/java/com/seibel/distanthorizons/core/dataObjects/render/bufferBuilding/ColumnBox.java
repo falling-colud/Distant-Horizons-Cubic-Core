@@ -60,9 +60,37 @@ public class ColumnBox
 		short blockWidth, short yHeight,
 		short minX, short minY, short minZ,
 		int color, byte irisBlockMaterialId, byte skyLight, byte blockLight,
-		long topData, long bottomData, 
+		long topData, long bottomData,
 		ColumnRenderView[] adjData, boolean[] isAdjDataSameDetailLevel,
 		short @Nullable [] faceTileIdsByDirectionOrdinal)
+	{
+		addBoxQuadsToBuilder(
+			builder, phantomArrayCheckout, clientLevelWrapper,
+			blockWidth, yHeight,
+			minX, minY, minZ,
+			color, irisBlockMaterialId, skyLight, blockLight,
+			topData, bottomData,
+			adjData, isAdjDataSameDetailLevel,
+			faceTileIdsByDirectionOrdinal,
+			(short) 0, RenderDataPointUtil.EMPTY_DATA, RenderDataPointUtil.EMPTY_DATA, RenderDataPointUtil.EMPTY_DATA);
+	}
+	/**
+	 * @param cubicSectionHeight the height of the cubic section this box is in, 0 for 2D sections.
+	 *                           Cubic boxes touching the top or bottom of their section are culled against the
+	 *                           sections above and below.
+	 * @param aboveBoundaryData the lowest render data point of the cubic section above, in that section's coordinates
+	 * @param belowBoundaryData the highest render data point of the cubic section below, in that section's coordinates
+	 * @param belowBoundaryVoidData the void (lighting only) data point of the cubic section below
+	 */
+	public static void addBoxQuadsToBuilder(
+		LodQuadBuilder builder, PhantomArrayListCheckout phantomArrayCheckout, IClientLevelWrapper clientLevelWrapper,
+		short blockWidth, short yHeight,
+		short minX, short minY, short minZ,
+		int color, byte irisBlockMaterialId, byte skyLight, byte blockLight,
+		long topData, long bottomData,
+		ColumnRenderView[] adjData, boolean[] isAdjDataSameDetailLevel,
+		short @Nullable [] faceTileIdsByDirectionOrdinal,
+		short cubicSectionHeight, long aboveBoundaryData, long belowBoundaryData, long belowBoundaryVoidData)
 	{
 		//================//
 		// variable setup //
@@ -73,6 +101,25 @@ public class ColumnBox
 		short maxZ = (short) (minZ + blockWidth);
 		byte skyLightTop = skyLight;
 		byte skyLightBottom = RenderDataPointUtil.doesDataPointExist(bottomData) ? RenderDataPointUtil.getLightSky(bottomData) : LodUtil.MIN_MC_LIGHT;
+
+		// cubic: a box touching the bottom of its section has the section below under it
+		boolean onCubicBottom = (cubicSectionHeight != 0) && (minY == 0) && !RenderDataPointUtil.doesDataPointExist(bottomData);
+		boolean onCubicTop = (cubicSectionHeight != 0) && (maxY == cubicSectionHeight) && !RenderDataPointUtil.doesDataPointExist(topData);
+		if (onCubicBottom)
+		{
+			if (RenderDataPointUtil.doesDataPointExist(belowBoundaryVoidData)
+				&& RenderDataPointUtil.getYMax(belowBoundaryVoidData) == cubicSectionHeight)
+			{
+				// open space below, lit by the section below
+				skyLightBottom = RenderDataPointUtil.getLightSky(belowBoundaryVoidData);
+			}
+			else if (!RenderDataPointUtil.doesDataPointExist(belowBoundaryData))
+			{
+				// nothing is known below (not generated yet),
+				// light it like faces next to missing neighbours are lit
+				skyLightBottom = LodUtil.MAX_MC_LIGHT;
+			}
+		}
 		
 		boolean transparencyEnabled = Config.Client.Advanced.Graphics.Quality.transparency.get() == EDhApiTransparency.COMPLETE;
 		
@@ -93,7 +140,9 @@ public class ColumnBox
 		
 		// if there isn't any data below this LOD, make this LOD's color opaque to prevent seeing void through transparent blocks
 		// Note: this LOD should still be considered transparent for this method's checks, otherwise rendering bugs may occur
-		if (!RenderDataPointUtil.doesDataPointExist(bottomData))
+		// (in cubic levels the section below may continue the column)
+		if (!RenderDataPointUtil.doesDataPointExist(bottomData)
+			&& !(onCubicBottom && RenderDataPointUtil.doesDataPointExist(belowBoundaryData)))
 		{
 			color = ColorUtil.setAlpha(color, 255);
 		}
@@ -116,6 +165,14 @@ public class ColumnBox
 			boolean skipTop = RenderDataPointUtil.doesDataPointExist(topData)
 					&& (RenderDataPointUtil.getYMin(topData) == maxY)
 					&& !isTopTransparent;
+			if (onCubicTop)
+			{
+				// covered by an opaque block at the bottom of the section above
+				skipTop = RenderDataPointUtil.doesDataPointExist(aboveBoundaryData)
+					&& !RenderDataPointUtil.hasZeroHeight(aboveBoundaryData)
+					&& RenderDataPointUtil.getYMin(aboveBoundaryData) == 0
+					&& !(RenderDataPointUtil.getAlpha(aboveBoundaryData) < 255 && transparencyEnabled);
+			}
 			
 			if (!skipTop)
 			{
@@ -133,6 +190,14 @@ public class ColumnBox
 			boolean skipBottom = RenderDataPointUtil.doesDataPointExist(bottomData)
 					&& (RenderDataPointUtil.getYMax(bottomData) == minY)
 					&& !isBottomTransparent;
+			if (onCubicBottom)
+			{
+				// resting on an opaque block at the top of the section below
+				skipBottom = RenderDataPointUtil.doesDataPointExist(belowBoundaryData)
+					&& !RenderDataPointUtil.hasZeroHeight(belowBoundaryData)
+					&& RenderDataPointUtil.getYMax(belowBoundaryData) == cubicSectionHeight
+					&& !(RenderDataPointUtil.getAlpha(belowBoundaryData) < 255 && transparencyEnabled);
+			}
 			if (!skipBottom)
 			{
 				builder.addQuadDown(

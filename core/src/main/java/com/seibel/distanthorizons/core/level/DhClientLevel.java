@@ -273,6 +273,8 @@ public class DhClientLevel extends AbstractDhLevel implements IDhClientLevel
 	
 	@Override
 	public DhBlockPos2D getTargetPosForGeneration() { return new DhBlockPos2D(MC_CLIENT.getPlayerBlockPos()); }
+	@Override
+	public int getTargetBlockYForGeneration() { return MC_CLIENT.getPlayerBlockPos().getY(); }
 	
 	//endregion
 	

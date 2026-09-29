@@ -19,6 +19,7 @@
 
 package com.seibel.distanthorizons.core.wrapperInterfaces.world;
 
+import com.seibel.distanthorizons.api.methods.cubic.DhApiCubic;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
 import com.seibel.distanthorizons.api.DhApi;
@@ -84,6 +85,12 @@ public interface ILevelWrapper extends IDhApiLevelWrapper, IBindable
 	int getMaxHeight();
 	@Override
 	int getMinHeight();
+
+	/**
+	 * @return true if this level's LODs are cubic (an octree of cubic sections),
+	 * as decided by the hook a cubic chunks mod sets through {@link DhApiCubic}
+	 */
+	default boolean isCubicLod() { return DhApiCubic.isCubicLevel(this.getWrappedMcObject()); }
 	
 	// Future note: don't use MC's getSeaLevel()
 	// this method returns an incorrect value for The End

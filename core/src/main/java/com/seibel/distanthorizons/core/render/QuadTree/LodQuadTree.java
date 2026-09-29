@@ -82,6 +82,11 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	
 	
 	public final int blockRenderDistanceDiameter;
+	/**
+	 * The block Y of the position the tree was last ticked at.
+	 * Cubic trees use it for their vertical window and every distance.
+	 */
+	private volatile int playerBlockY = 0;
 	@WillNotClose
 	private final FullDataSourceProviderV2 fullDataSourceProvider;
 	
@@ -166,9 +171,22 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			IDhClientLevel level, int viewDiameterInBlocks,
 			int initialPlayerBlockX, int initialPlayerBlockZ,
 			FullDataSourceProviderV2 fullDataSourceProvider)
+	{ this(level, viewDiameterInBlocks, 0, initialPlayerBlockX, 0, initialPlayerBlockZ, fullDataSourceProvider); }
+	/**
+	 * @param verticalRadiusInBlocks how far above and below the camera the tree reaches, only used by cubic levels
+	 * @param initialPlayerBlockY only used by cubic levels
+	 */
+	public LodQuadTree(
+			IDhClientLevel level, int viewDiameterInBlocks, int verticalRadiusInBlocks,
+			int initialPlayerBlockX, int initialPlayerBlockY, int initialPlayerBlockZ,
+			FullDataSourceProviderV2 fullDataSourceProvider)
 	{
-		super(viewDiameterInBlocks, FullDataSourceV2.WIDTH, 
-			new DhBlockPos2D(initialPlayerBlockX, initialPlayerBlockZ), DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL);
+		super(viewDiameterInBlocks, FullDataSourceV2.WIDTH,
+			new DhBlockPos2D(initialPlayerBlockX, initialPlayerBlockZ), DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL,
+			fullDataSourceProvider.cubic, initialPlayerBlockY, verticalRadiusInBlocks,
+			level.getLevelWrapper().getMinHeight(), level.getLevelWrapper().getMinHeight() + level.getLevelWrapper().getMaxHeight());
+
+		this.playerBlockY = initialPlayerBlockY;
 		
 		DEBUG_RENDERER.register(this, Config.Client.Advanced.Debugging.DebugWireframe.showQuadTreeRenderStatus);
 		
@@ -231,8 +249,12 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	 * update the quadTree using the playerPos 
 	 * and queue any necessary work based on the tree's state.
 	 */
-	public void tryTick(DhBlockPos2D playerPos)
+	public void tryTick(DhBlockPos2D playerPos) { this.tryTick(playerPos, this.playerBlockY); }
+	/** @param playerBlockY only used by cubic trees */
+	public void tryTick(DhBlockPos2D playerPos, int playerBlockY)
 	{
+		this.playerBlockY = playerBlockY;
+		
 		if (this.level == null)
 		{
 			// the quad tree was created before a level reference was created
@@ -273,7 +295,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		//region
 		
 		// remove out of bound sections
-		this.setCenterBlockPos(playerPos, 
+		this.setCenterBlockPos(playerPos, this.playerBlockY,
 			// remove completely out of bound nodes
 			// (the root node is no longer in bounds)
 			(renderSection) ->
@@ -483,7 +505,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			this.queueThreadRunningRef.set(true); // don't run multiple threads at once
 			
 			// needs to be called outside the queue thread to prevent concurrency issues
-			ArrayList<QuadNode<LodRenderSection>> worldGenNodes = this.tickNodeHolder.getWorldGenNodesNearToFar(playerPos);
+			ArrayList<QuadNode<LodRenderSection>> worldGenNodes = this.tickNodeHolder.getWorldGenNodesNearToFar(playerPos, this.playerBlockY);
 			
 			// running on a separate thread allows for faster loading
 			// of finished LODs
@@ -655,7 +677,8 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	{
 		// recursively update each child node
 		int childNodeRenderCount = 0;
-		for (int i = 0; i < 4; i++)
+		int childCount = DhSectionPos.getChildCount(quadNode.sectionPos);
+		for (int i = 0; i < childCount; i++)
 		{
 			long childPos = DhSectionPos.getChildByIndex(quadNode.sectionPos, i);
 			QuadNode<LodRenderSection> childNode = quadNode.getChildByIndex(i);
@@ -681,7 +704,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			this.tickNodeHolder.addDisableNode(quadNode);
 			return false;
 		}
-		else if (childNodeRenderCount >= 4)
+		else if (childNodeRenderCount >= childCount)
 		{
 			this.tickNodeHolder.addDisableNode(quadNode);
 			
@@ -737,12 +760,20 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		}
 		else
 		{
+			if (quadNode.value != null
+				&& quadNode.value.loadedWithoutData)
+			{
+				// nothing was generated here yet,
+				// the parent renders in its place until this has data
+				this.tickNodeHolder.addNodeNeedingData(quadNode);
+			}
+
 			this.tickNodeHolder.addDisableNode(quadNode);
 			return false;
 		}
 	}
-	
-	
+
+
 	@NotNull
 	private QuadNode<LodRenderSection> tryAddNodeToTree(
 		@NotNull QuadNode<LodRenderSection> rootNode,
@@ -766,7 +797,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	
 	private void recursivelyDisableChildNodes(@NotNull QuadNode<LodRenderSection> quadNode)
 	{
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < quadNode.getChildSlotCount(); i++)
 		{
 			QuadNode<LodRenderSection> childNode = quadNode.getChildByIndex(i);
 			this.tickNodeHolder.removeEnableAndDisableNode(childNode);
@@ -800,7 +831,14 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			LodRenderSection renderSection = this.tryGetValue(pos);
 			if (renderSection != null)
 			{
-				// the section only needs to be updated if a buffer is currently present 
+				if (renderSection.loadedWithoutData)
+				{
+					// data may exist now, the next tick loads it
+					renderSection.loadedWithoutData = false;
+					continue;
+				}
+
+				// the section only needs to be updated if a buffer is currently present
 				if (renderSection.gpuUploadComplete())
 				{
 					if (renderSection.gpuUploadInProgress()
@@ -831,16 +869,18 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			}
 			
 			// closer LODs first
-			int aDist = DhSectionPos.getManhattanBlockDistance(a.pos, playerPos);
-			int bDist = DhSectionPos.getManhattanBlockDistance(b.pos, playerPos);
-			return Integer.compare(aDist, bDist); // smaller numbers first
+			long aDist = this.getSortingDistance(a.pos, playerPos);
+			long bDist = this.getSortingDistance(b.pos, playerPos);
+			return Long.compare(aDist, bDist); // smaller numbers first
 		});
-		
+
 		for (int i = 0; i < loadSectionList.size(); i++)
 		{
 			LodRenderSection renderSection = loadSectionList.get(i);
-			if (!renderSection.gpuUploadInProgress() 
-				&& !renderSection.gpuUploadComplete())
+			if (!renderSection.gpuUploadInProgress()
+				&& !renderSection.gpuUploadComplete()
+				// don't reload empty cubic sections every tick, they're reloaded once they get data
+				&& !(renderSection.loadedWithoutData && !renderSection.renderDataDirty))
 			{
 				renderSection.uploadRenderDataToGpuAsync();
 			}
@@ -864,9 +904,9 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		this.sortedMissingPosList.addAll(this.missingGenerationPosSet);
 		this.sortedMissingPosList.sort((posA, posB) ->
 		{
-			int aDist = DhSectionPos.getManhattanBlockDistance(posA, playerPos);
-			int bDist = DhSectionPos.getManhattanBlockDistance(posB, playerPos);
-			return Integer.compare(aDist, bDist);
+			long aDist = this.getSortingDistance(posA, playerPos);
+			long bDist = this.getSortingDistance(posB, playerPos);
+			return Long.compare(aDist, bDist);
 		});
 		
 		
@@ -971,7 +1011,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 				if (timeSinceLastQuery > 10_000L)
 				{
 					int maxRegenDistanceInBlocks = WorldGenUtil.getMaxRegenDistanceInBlocks();
-					totalWorldGenChunkCount = this.fullDataSourceProvider.repo.getRegenChunkCount(playerPos.x, playerPos.z, maxRegenDistanceInBlocks);
+					totalWorldGenChunkCount = this.fullDataSourceProvider.repo.getRegenChunkCount(playerPos.x, this.playerBlockY, playerPos.z, maxRegenDistanceInBlocks);
 					this.cachedRegenTaskCount = totalWorldGenChunkCount;
 					
 					this.lastRegenTaskCountQueryMs = System.currentTimeMillis();
@@ -1211,15 +1251,28 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		// the radius (half diagonal) is needed so the zoom cone check doesn't
 		// miss sections that only partially overlap the camera's view
 		double sectionBlockRadius = DhSectionPos.getBlockWidth(sectionPos) * (Math.sqrt(2.0) / 2.0);
+		// cubic sections also measure the vertical distance, see calcExpectedDetailLevel(...radius)
 		return this.calcExpectedDetailLevel(playerPos, sectionPos, DhSectionPos.getCenterBlockPosX(sectionPos), DhSectionPos.getCenterBlockPosZ(sectionPos), sectionBlockRadius);
 	}
 	
 	public byte calcExpectedDetailLevel(DhBlockPos2D playerPos, int targetBlockPosX, int targetBlockPosZ)
 	{ return this.calcExpectedDetailLevel(playerPos, DhSectionPos.encodeContaining(DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL, new DhBlockPos(targetBlockPosX, 0, targetBlockPosZ)), targetBlockPosX, targetBlockPosZ, 0.0); }
 	
+	/**
+	 * The expected detail level of a section as seen from where the tree was last ticked
+	 * (including its Y, for cubic sections).
+	 */
+	public byte calcExpectedDetailLevel(long sectionPos) { return this.calcExpectedDetailLevel(this.getCenterBlockPos(), sectionPos); }
+
 	private byte calcExpectedDetailLevel(DhBlockPos2D playerPos, long targetSectionPos, int targetBlockPosX, int targetBlockPosZ, double targetBlockRadius)
 	{
 		double blockDistance = playerPos.dist(targetBlockPosX, targetBlockPosZ);
+		if (DhSectionPos.isCubic(targetSectionPos))
+		{
+			// cubic LODs lose detail with the distance in every direction
+			double verticalDistance = DhSectionPos.getCubicCenterBlockY(targetSectionPos) - this.playerBlockY;
+			blockDistance = Math.sqrt((blockDistance * blockDistance) + (verticalDistance * verticalDistance));
+		}
 		
 		// Don't allow zooming for LODs that will be missing child nodes.
 		// Doing so will cause holes/missing LODs.
@@ -1336,12 +1389,42 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			long adjacentPos = DhSectionPos.getAdjacentPos(pos, direction);
 			this.sectionsToReload.add(adjacentPos);
 		}
+
+		if (DhSectionPos.isCubic(pos))
+		{
+			// the faces between vertically adjacent cubic sections depend on both
+			this.sectionsToReload.add(DhSectionPos.getAdjacentPos(pos, EDhDirection.UP));
+			this.sectionsToReload.add(DhSectionPos.getAdjacentPos(pos, EDhDirection.DOWN));
+		}
 	}
 	
 	//endregion external render requests
 	
 	
 	
+	//=================//
+	// sorting helpers //
+	//=================//
+	//region sorting helpers
+
+	/** Manhattan distance to the tree's center, including the vertical distance for cubic positions */
+	private long getSortingDistance(long pos, DhBlockPos2D playerPos)
+	{
+		long distance = DhSectionPos.getManhattanBlockDistance(pos, playerPos);
+		if (DhSectionPos.isCubic(pos))
+		{
+			distance += Math.abs((long) DhSectionPos.getCubicCenterBlockY(pos) - this.playerBlockY);
+		}
+		return distance;
+	}
+
+	/** @return the block Y the tree was last ticked at */
+	public int getPlayerBlockY() { return this.playerBlockY; }
+
+	//endregion sorting helpers
+
+
+
 	//===========//
 	// debugging //
 	//===========//
@@ -1386,7 +1469,12 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			// since most worlds don't render all the way up to the max height
 			int levelHeightRange = (levelMaxY - levelMinY);
 			int maxY = levelMaxY - (levelHeightRange / 2);
-			
+			if (DhSectionPos.isCubic(renderSection.pos))
+			{
+				levelMinY = DhSectionPos.getCubicMinBlockY(renderSection.pos);
+				maxY = levelMinY + DhSectionPos.getCubicBlockHeight(renderSection.pos);
+			}
+
 			debugRenderer.renderBox(new AbstractDebugWireframeRenderer.Box(renderSection.pos, levelMinY, maxY, 0.05f, color));
 		}
 	}

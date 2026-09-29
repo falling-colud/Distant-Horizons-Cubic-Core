@@ -176,7 +176,7 @@ public class FullDataUpdatePropagatorV2 implements IDebugRenderable, AutoCloseab
 		
 		
 		// get the positions that need to be applied to their parents
-		LongArrayList outputChildPosList = this.provider.repo.getParentPositionsToUpdate(targetBlockPos.getX(), targetBlockPos.getZ(), maxUpdateTaskCount);
+		LongArrayList outputChildPosList = this.provider.repo.getParentPositionsToUpdate(targetBlockPos.getX(), targetBlockPos.getY(), targetBlockPos.getZ(), maxUpdateTaskCount);
 		
 		// combine updates together based on their parent
 		HashMap<Long, HashSet<Long>> outputChildPosByInputParentPos = new HashMap<>();
@@ -329,6 +329,14 @@ public class FullDataUpdatePropagatorV2 implements IDebugRenderable, AutoCloseab
 	/** apply update top -> down, from parent to child */
 	private void runChildUpdates(PriorityTaskPicker.Executor executor, DhBlockPos targetBlockPos)
 	{
+		if (this.provider.cubic)
+		{
+			// Cubic levels never push data down: a cubic section that has no data renders nothing
+			// and its parent keeps rendering until every child can, instead of every section
+			// getting a placeholder copy of its parent's data (and a database row) first.
+			return;
+		}
+
 		int maxUpdateTaskCount = getMaxPropagateTaskCount();
 		
 		// queue child updates
@@ -336,7 +344,7 @@ public class FullDataUpdatePropagatorV2 implements IDebugRenderable, AutoCloseab
 			&& this.updatingPosSet.size() < maxUpdateTaskCount)
 		{
 			// get the positions that need to be applied to their children
-			LongArrayList outputParentPosList = this.provider.repo.getChildPositionsToUpdate(targetBlockPos.getX(), targetBlockPos.getZ(), maxUpdateTaskCount);
+			LongArrayList outputParentPosList = this.provider.repo.getChildPositionsToUpdate(targetBlockPos.getX(), targetBlockPos.getY(), targetBlockPos.getZ(), maxUpdateTaskCount);
 			
 			// queue the updates
 			for (long parentOutputPos : outputParentPosList)
@@ -396,7 +404,8 @@ public class FullDataUpdatePropagatorV2 implements IDebugRenderable, AutoCloseab
 								
 								
 								// apply parent to each child
-								for (int i = 0; i < 4; i++)
+								int childCount = DhSectionPos.getChildCount(parentOutputPos);
+								for (int i = 0; i < childCount; i++)
 								{
 									long childInputPos = DhSectionPos.getChildByIndex(parentOutputPos, i);
 									
@@ -599,7 +608,7 @@ public class FullDataUpdatePropagatorV2 implements IDebugRenderable, AutoCloseab
 		int maxRegenTaskCount = GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount();
 		
 		LongArrayList updatePosList = this.provider.repo.getChildPositionsToRegen(
-			targetBlockPos.getX(), targetBlockPos.getZ(), 
+			targetBlockPos.getX(), targetBlockPos.getY(), targetBlockPos.getZ(),
 			maxRegenBlockDistance, maxRegenTaskCount);
 		if (updatePosList.size() == 0)
 		{

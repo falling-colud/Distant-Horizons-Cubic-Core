@@ -58,7 +58,17 @@ public class ColumnRenderBufferBuilder
 	public static void makeLodRenderData(
 			LodQuadBuilder quadBuilder, ColumnRenderSource renderSource, IClientLevelWrapper clientLevelWrapper,
 			ColumnRenderSource[] adjRegions, boolean[] isSameDetailLevel)
+	{ makeLodRenderData(quadBuilder, renderSource, clientLevelWrapper, adjRegions, isSameDetailLevel, null, null); }
+	/**
+	 * @param aboveRenderSource cubic sections only: the bottom layer of the section above
+	 * @param belowRenderSource cubic sections only: the top layer of the section below
+	 */
+	public static void makeLodRenderData(
+			LodQuadBuilder quadBuilder, ColumnRenderSource renderSource, IClientLevelWrapper clientLevelWrapper,
+			ColumnRenderSource[] adjRegions, boolean[] isSameDetailLevel,
+			@Nullable ColumnRenderSource aboveRenderSource, @Nullable ColumnRenderSource belowRenderSource)
 	{
+		short cubicSectionHeight = DhSectionPos.isCubic(renderSource.pos) ? (short) DhSectionPos.getCubicBlockHeight(renderSource.pos) : 0;
 		//=============//
 		// debug check //
 		//=============//
@@ -92,7 +102,9 @@ public class ColumnRenderBufferBuilder
 			ColumnRenderView northAdjView = ColumnRenderView.getPooled();
 			ColumnRenderView southAdjView = ColumnRenderView.getPooled();
 			ColumnRenderView eastAdjView = ColumnRenderView.getPooled();
-			ColumnRenderView westAdjView = ColumnRenderView.getPooled())
+			ColumnRenderView westAdjView = ColumnRenderView.getPooled();
+			ColumnRenderView aboveView = ColumnRenderView.getPooled();
+			ColumnRenderView belowView = ColumnRenderView.getPooled())
 		{
 			ColumnRenderView[] adjColumnViews = new ColumnRenderView[EDhDirection.CARDINAL_COMPASS.length];
 			adjColumnViews[EDhDirection.NORTH.compassIndex] = northAdjView;
@@ -236,10 +248,40 @@ public class ColumnRenderBufferBuilder
 					
 					
 					
+					//==============================//
+					// get the vertical neighbours  //
+					// (cubic sections only)        //
+					//==============================//
+
+					long aboveBoundaryData = RenderDataPointUtil.EMPTY_DATA;
+					long belowBoundaryData = RenderDataPointUtil.EMPTY_DATA;
+					long belowBoundaryVoidData = RenderDataPointUtil.EMPTY_DATA;
+					if (cubicSectionHeight != 0)
+					{
+						if (aboveRenderSource != null)
+						{
+							aboveRenderSource.populateColumnView(aboveView, relX, relZ);
+							aboveBoundaryData = getLowestDataPoint(aboveView);
+						}
+						if (belowRenderSource != null)
+						{
+							belowRenderSource.populateColumnView(belowView, relX, relZ);
+							if (belowView.size > 0
+								&& RenderDataPointUtil.doesDataPointExist(belowView.get(0))
+								&& !RenderDataPointUtil.hasZeroHeight(belowView.get(0)))
+							{
+								belowBoundaryData = belowView.get(0);
+							}
+							belowBoundaryVoidData = belowView.getVoid();
+						}
+					}
+
+
+
 					//==========================//
 					// build this render column //
 					//==========================//
-					
+
 					for (int i = 0; i < columnRenderData.size; i++)
 					{
 						// can be uncommented to limit which vertical LOD is generated
@@ -285,7 +327,8 @@ public class ColumnRenderBufferBuilder
 							data, topDataPoint, bottomDataPoint,
 							adjColumnViews, isSameDetailLevel, faceTileIdsByDirectionOrdinal,
 							thisDetailLevel, relX, relZ,
-							quadBuilder);
+							quadBuilder,
+							cubicSectionHeight, aboveBoundaryData, belowBoundaryData, belowBoundaryVoidData);
 					}
 				}// for z
 			}// for x
@@ -293,12 +336,30 @@ public class ColumnRenderBufferBuilder
 		
 		quadBuilder.mergeQuads();
 	}
+	/** @return the lowest real data point of a render column (columns are ordered top to bottom), {@link RenderDataPointUtil#EMPTY_DATA} if there is none */
+	private static long getLowestDataPoint(ColumnRenderView view)
+	{
+		long lowest = RenderDataPointUtil.EMPTY_DATA;
+		for (int i = 0; i < view.size; i++)
+		{
+			long data = view.get(i);
+			if (!RenderDataPointUtil.doesDataPointExist(data)
+				|| RenderDataPointUtil.hasZeroHeight(data))
+			{
+				break;
+			}
+			lowest = data;
+		}
+		return lowest;
+	}
+
 	private static void addRenderDataPointToBuilder(
 			IClientLevelWrapper clientLevelWrapper, PhantomArrayListCheckout phantomArrayCheckout,
-			long renderData, long topRenderData, long bottomRenderData, 
+			long renderData, long topRenderData, long bottomRenderData,
 			ColumnRenderView[] adjColumnViews, boolean[] isSameDetailLevel, short @Nullable [] faceTileIdsByDirectionOrdinal,
-			byte detailLevel, int renderSourceOffsetPosX, int renderSourceOffsetPosZ, 
-			LodQuadBuilder quadBuilder)
+			byte detailLevel, int renderSourceOffsetPosX, int renderSourceOffsetPosZ,
+			LodQuadBuilder quadBuilder,
+			short cubicSectionHeight, long aboveBoundaryData, long belowBoundaryData, long belowBoundaryVoidData)
 	{
 		long sectionPos = DhSectionPos.encode(detailLevel, renderSourceOffsetPosX, renderSourceOffsetPosZ);
 		
@@ -428,7 +489,8 @@ public class ColumnRenderBufferBuilder
 			RenderDataPointUtil.getLightSky(renderData),
 			fullBright ? LodUtil.MAX_MC_LIGHT : RenderDataPointUtil.getLightBlock(renderData),
 			topRenderData, bottomRenderData, adjColumnViews, isSameDetailLevel,
-			faceTileIdsByDirectionOrdinal);
+			faceTileIdsByDirectionOrdinal,
+			cubicSectionHeight, aboveBoundaryData, belowBoundaryData, belowBoundaryVoidData);
 	}
 	
 }

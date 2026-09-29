@@ -53,7 +53,16 @@ public class DhFrustumBounds implements IDhApiCullingFrustum
 	{
 		Vector3f lodMin = new Vector3f(lodBlockPosMinX, this.worldMinY, lodBlockPosMinZ);
 		Vector3f lodMax = new Vector3f(lodBlockPosMinX + lodBlockWidth, this.worldMaxY, lodBlockPosMinZ + lodBlockWidth);
-		
+
+		return this.frustum.testAab(lodMin, lodMax);
+	}
+
+	@Override
+	public boolean intersects(int lodBlockPosMinX, int lodBlockPosMinY, int lodBlockPosMinZ, int lodBlockWidth, int lodBlockHeight, int lodDetailLevel)
+	{
+		Vector3f lodMin = new Vector3f(lodBlockPosMinX, lodBlockPosMinY, lodBlockPosMinZ);
+		Vector3f lodMax = new Vector3f(lodBlockPosMinX + lodBlockWidth, lodBlockPosMinY + lodBlockHeight, lodBlockPosMinZ + lodBlockWidth);
+
 		return this.frustum.testAab(lodMin, lodMax);
 	}
 	

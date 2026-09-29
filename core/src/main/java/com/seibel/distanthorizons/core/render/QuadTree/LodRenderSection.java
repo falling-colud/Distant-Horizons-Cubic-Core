@@ -85,6 +85,13 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 	 */
 	public boolean renderDataDirty = false;
 	public boolean queuedMissingSectionsForRetrieval = false;
+	/**
+	 * Cubic levels only: this section was loaded and nothing has been generated or saved for it yet. <br>
+	 * It doesn't render, its parent keeps rendering in its place (cubic levels don't fill
+	 * children with copies of their parents' data), and it isn't loaded again until its
+	 * position is reloaded, which happens when its data arrives.
+	 */
+	public volatile boolean loadedWithoutData = false;
 	
 	/** this reference is necessary so we can determine what VBO to render */
 	public LodBufferContainer renderBufferContainer; 
@@ -238,6 +245,30 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 	@Nullable
 	private synchronized LodQuadBuilder getAndBuildRenderData()
 	{
+		if (DhSectionPos.isCubic(this.pos))
+		{
+			// a missing database row reads as an empty data source,
+			// an empty cubic section must not replace its parent
+			boolean hasData;
+			try
+			{
+				hasData = this.fullDataSourceProvider.repo.existsWithKey(this.pos);
+			}
+			catch (Exception e)
+			{
+				hasData = false;
+			}
+
+			if (!hasData)
+			{
+				this.loadedWithoutData = true;
+				// nothing to upload, the section is up to date until its position is reloaded
+				this.renderDataDirty = false;
+				return null;
+			}
+			this.loadedWithoutData = false;
+		}
+
 		try (ColumnRenderSource thisRenderSource = this.getRenderSourceForPos(this.pos, null))
 		{
 			if (thisRenderSource == null)
@@ -271,7 +302,19 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 
 				// the render sources are only needed by this synchronous method,
 				// then they can be closed
-				ColumnRenderBufferBuilder.makeLodRenderData(lodQuadBuilder, thisRenderSource, this.clientLevelWrapper, adjacentRenderSections, adjIsSameDetailLevel);
+				if (DhSectionPos.isCubic(this.pos))
+				{
+					// cubic sections also cull the faces between them and the sections above and below
+					try (ColumnRenderSource aboveRenderSource = this.getRenderSourceForPos(this.pos, EDhDirection.UP);
+						ColumnRenderSource belowRenderSource = this.getRenderSourceForPos(this.pos, EDhDirection.DOWN))
+					{
+						ColumnRenderBufferBuilder.makeLodRenderData(lodQuadBuilder, thisRenderSource, this.clientLevelWrapper, adjacentRenderSections, adjIsSameDetailLevel, aboveRenderSource, belowRenderSource);
+					}
+				}
+				else
+				{
+					ColumnRenderBufferBuilder.makeLodRenderData(lodQuadBuilder, thisRenderSource, this.clientLevelWrapper, adjacentRenderSections, adjIsSameDetailLevel);
+				}
 				return lodQuadBuilder;
 			}
 			catch (Exception e)
@@ -317,7 +360,9 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 	private boolean isAdjacentPosSameDetailLevel(EDhDirection direction)
 	{
 		long adjPos = DhSectionPos.getAdjacentPos(this.pos, direction);
-		byte detailLevel = this.quadTree.calcExpectedDetailLevel(new DhBlockPos2D(MC.getPlayerBlockPos()), adjPos);
+		byte detailLevel = DhSectionPos.isCubic(adjPos)
+			? this.quadTree.calcExpectedDetailLevel(adjPos)
+			: this.quadTree.calcExpectedDetailLevel(new DhBlockPos2D(MC.getPlayerBlockPos()), adjPos);
 		detailLevel += DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL;
 		return detailLevel == DhSectionPos.getDetailLevel(this.pos);
 	}
@@ -437,11 +482,16 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 		
 		int levelMinY = this.clientLevelWrapper.getMinHeight();
 		int levelMaxY = this.clientLevelWrapper.getMaxHeight();
-		
+
 		// show the wireframe a bit lower than world max height,
 		// since most worlds don't render all the way up to the max height
 		int levelHeightRange = (levelMaxY - levelMinY);
 		int maxY = levelMaxY - (levelHeightRange / 2);
+		if (DhSectionPos.isCubic(this.pos))
+		{
+			levelMinY = DhSectionPos.getCubicMinBlockY(this.pos);
+			maxY = levelMinY + DhSectionPos.getCubicBlockHeight(this.pos);
+		}
 		
 		debugRenderer.renderBox(new AbstractDebugWireframeRenderer.Box(this.pos, levelMinY, maxY, 0.01f, color));
 	}

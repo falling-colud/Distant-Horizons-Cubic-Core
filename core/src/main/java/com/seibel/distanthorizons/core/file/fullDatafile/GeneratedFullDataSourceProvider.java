@@ -146,6 +146,16 @@ public class GeneratedFullDataSourceProvider extends FullDataSourceProviderV2 im
 				LodUtil.assertTrue(genTaskResult.dataSource != null, "Successful retrieval object should have a datasource.");
 				
 				this.dataUpdater.updateDataSource(genTaskResult.dataSource);
+
+				// A cubic section's own generation replaces columns that only held one of their
+				// vertical halves (see FullDataSourceV2#CUBIC_PARTIAL_GENERATION_STEP),
+				// which may have come from a better child. Merge the existing children in again.
+				long resultPos = genTaskResult.dataSource.getPos();
+				if (DhSectionPos.isCubic(resultPos)
+					&& DhSectionPos.getDetailLevel(resultPos) > FullDataSourceProviderV2.LEAF_SECTION_DETAIL_LEVEL)
+				{
+					DhSectionPos.forEachChild(resultPos, (long childPos) -> this.repo.setApplyToParent(childPos, true));
+				}
 				
 				// synchronized to prevent a rare issue where the world generator is being shut down while this listener is firing
 				synchronized (this.onWorldGenTaskCompleteListeners)
@@ -522,6 +532,12 @@ public class GeneratedFullDataSourceProvider extends FullDataSourceProviderV2 im
 		boolean shouldDoWorldGen();
 		
 		DhBlockPos2D getTargetPosForGeneration();
+
+		/**
+		 * @return the block Y of the position last returned by {@link #getTargetPosForGeneration()},
+		 * cubic levels generate the sections nearest to it first
+		 */
+		default int getTargetBlockYForGeneration() { return 0; }
 		
 		/** Fired whenever a section has completed generating */
 		void onWorldGenTaskComplete(long pos);

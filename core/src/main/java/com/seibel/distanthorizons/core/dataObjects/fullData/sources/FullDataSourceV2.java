@@ -335,7 +335,8 @@ public class FullDataSourceV2
 		
 		
 		// search for a datapoint that contains the given block y position
-		int relBlockPosY = blockPosY - levelMinY;
+		// (cubic sections store heights relative to their own bottom)
+		int relBlockPosY = blockPosY - DhSectionPos.getMinBlockY(this.pos, levelMinY);
 		long dataPoint;
 		for (int i = 0; i < dataColumn.size(); i++)
 		{
@@ -597,8 +598,13 @@ public class FullDataSourceV2
 		
 		// input is one detail level lower (higher detail)
 		// so 2x2 input data points will be converted into 1 recipient data point
-		
-		
+
+		if (DhSectionPos.isCubic(this.pos))
+		{
+			return this.updateFromCubicChild(inputDataSource, remappedIds);
+		}
+
+
 		// determine where in the input data source should be written to
 		// since the input is one detail level below it will be one of this position's 4 children
 		int minChildXPos = DhSectionPos.getX(DhSectionPos.getChildByIndex(this.pos, 0));
@@ -1097,8 +1103,13 @@ public class FullDataSourceV2
 		
 		// input is one detail level higher (lower detail)
 		// so 1x1 input data points will be converted into 2x2 recipient data point
-		
-		
+
+		if (DhSectionPos.isCubic(this.pos))
+		{
+			return this.downsampleFromCubicParent(inputDataSource, remappedIds);
+		}
+
+
 		// determine where in this data source should be read from
 		// since the input is one detail level above this will be one of input position's 4 children
 		int minParentXPos = DhSectionPos.getX(DhSectionPos.getChildByIndex(inputDataSource.pos, 0));
@@ -1249,6 +1260,281 @@ public class FullDataSourceV2
 	
 	
 	
+	//==============//
+	// cubic merges //
+	//==============//
+	//region cubic merges
+
+	/**
+	 * Marks a cubic column that only holds data for one of its vertical halves. <br>
+	 * Lower than {@link EDhApiWorldGenerationStep#SURFACE} so the section is still generated
+	 * when it's needed at its own detail level, higher than {@link EDhApiWorldGenerationStep#EMPTY}
+	 * so the half that is present is saved. Cubic generators never produce this step.
+	 */
+	public static final byte CUBIC_PARTIAL_GENERATION_STEP = EDhApiWorldGenerationStep.STRUCTURE_START.value;
+
+	/**
+	 * @return true if a cubic column with this generation step holds data for its whole height
+	 * and may be merged into its parent
+	 */
+	public static boolean isCompleteCubicGenerationStep(byte generationStep) { return generationStep >= EDhApiWorldGenerationStep.SURFACE.value; }
+
+	/**
+	 * Merges a cubic child one detail level below into this cubic section. <br><br>
+	 *
+	 * Each 2x2 group of child columns becomes one of this section's columns, as for 2D sections.
+	 * If this section splits vertically the child only covers the lower or upper half of those columns:
+	 * the merged child data replaces that half and the other half is kept. <br>
+	 * Only complete child columns are merged, so a partially generated child never
+	 * replaces data this section already has (the data it does have comes from this section's own
+	 * generation, which regenerates the whole section and re-merges the children, see
+	 * {@link FullDataSourceV2#CUBIC_PARTIAL_GENERATION_STEP}).
+	 */
+	private boolean updateFromCubicChild(FullDataSourceV2 inputDataSource, int[] remappedIds)
+	{
+		if (!DhSectionPos.isCubic(inputDataSource.pos))
+		{
+			throw new IllegalArgumentException("A cubic data source can only be merged with cubic data sources. This pos ["+DhSectionPos.toString(this.pos)+"], input pos ["+DhSectionPos.toString(inputDataSource.pos)+"].");
+		}
+		if (!DhSectionPos.contains(this.pos, inputDataSource.pos))
+		{
+			throw new IllegalArgumentException("The cubic child ["+DhSectionPos.toString(inputDataSource.pos)+"] isn't inside this section ["+DhSectionPos.toString(this.pos)+"].");
+		}
+
+		byte thisDetailLevel = DhSectionPos.getDetailLevel(this.pos);
+		int childHeight = DhSectionPos.getCubicBlockHeight((byte) (thisDetailLevel - 1));
+		boolean splitsVertically = DhSectionPos.cubicSplitsVertically(thisDetailLevel);
+
+		// the child's position inside this section
+		int minChildXPos = DhSectionPos.getX(DhSectionPos.getChildByIndex(this.pos, 0));
+		int recipientOffsetX = (DhSectionPos.getX(inputDataSource.pos) == minChildXPos) ? 0 : (WIDTH / 2);
+		int minChildZPos = DhSectionPos.getZ(DhSectionPos.getChildByIndex(this.pos, 0));
+		int recipientOffsetZ = (DhSectionPos.getZ(inputDataSource.pos) == minChildZPos) ? 0 : (WIDTH / 2);
+		boolean upperHalf = splitsVertically && ((DhSectionPos.getY(inputDataSource.pos) & 1) != 0);
+		int childMinY = upperHalf ? childHeight : 0;
+		int otherHalfMinY = upperHalf ? 0 : childHeight;
+
+
+		boolean dataChanged = false;
+		for (int x = 0; x < WIDTH; x += 2)
+		{
+			for (int z = 0; z < WIDTH; z += 2)
+			{
+				byte inputGenStep = determineMinWorldGenStepForTwoByTwoColumn(inputDataSource.columnGenerationSteps, x, z);
+				if (!isCompleteCubicGenerationStep(inputGenStep))
+				{
+					// incomplete child data is never merged
+					continue;
+				}
+
+				int recipientX = (x / 2) + recipientOffsetX;
+				int recipientZ = (z / 2) + recipientOffsetZ;
+				int recipientIndex = relativePosToIndex(recipientX, recipientZ);
+
+				LongArrayList mergedChildColumn = mergeInputTwoByTwoDataColumn(inputDataSource, x, z);
+				for (int i = 0; i < mergedChildColumn.size(); i++)
+				{
+					mergedChildColumn.set(i, FullDataPointUtil.remap(remappedIds, mergedChildColumn.getLong(i)));
+				}
+
+				LongArrayList oldColumn = this.dataPoints[recipientIndex];
+				byte oldGenStep = this.columnGenerationSteps.getByte(recipientIndex);
+
+				LongArrayList newColumn;
+				byte newGenStep;
+				if (!splitsVertically)
+				{
+					// the child covers this whole column
+					newColumn = mergedChildColumn;
+					newGenStep = inputGenStep;
+				}
+				else
+				{
+					LongArrayList childPart = offsetColumn(mergedChildColumn, childMinY);
+					LongArrayList otherHalf = clipColumn(oldColumn, otherHalfMinY, otherHalfMinY + childHeight, 0);
+					newColumn = upperHalf ? concatColumns(childPart, otherHalf) : concatColumns(otherHalf, childPart);
+
+					if (otherHalf.isEmpty())
+					{
+						newGenStep = CUBIC_PARTIAL_GENERATION_STEP;
+					}
+					else
+					{
+						// the other half came from a complete child or this section's own generation,
+						// the column's old step is a lower bound for it unless the column was partial
+						byte otherHalfGenStep = isCompleteCubicGenerationStep(oldGenStep) ? oldGenStep : EDhApiWorldGenerationStep.SURFACE.value;
+						newGenStep = (byte) Math.min(inputGenStep, otherHalfGenStep);
+					}
+				}
+
+				if (!dataChanged
+					&& (oldGenStep != newGenStep || !oldColumn.equals(newColumn)))
+				{
+					dataChanged = true;
+				}
+
+				oldColumn.clear();
+				oldColumn.addAll(newColumn);
+				if (RUN_DATA_ORDER_VALIDATION)
+				{
+					throwIfDataColumnInWrongOrder(inputDataSource.pos, oldColumn);
+				}
+
+				this.columnGenerationSteps.set(recipientIndex, newGenStep);
+				byte worldCompressionMode = determineHighestWorldCompressionForTwoByTwoColumn(inputDataSource.columnWorldCompressionMode, x, z);
+				if (splitsVertically)
+				{
+					worldCompressionMode = (byte) Math.max(worldCompressionMode, this.columnWorldCompressionMode.getByte(recipientIndex));
+				}
+				this.columnWorldCompressionMode.set(recipientIndex, worldCompressionMode);
+
+				this.isEmpty = false;
+			}
+		}
+
+		return dataChanged;
+	}
+
+	/**
+	 * Fills this cubic section's empty columns with the matching part of its parent's columns.
+	 * Cubic levels don't propagate data downwards, this exists so a stray request can't write
+	 * columns from the wrong vertical range.
+	 */
+	private boolean downsampleFromCubicParent(FullDataSourceV2 inputDataSource, int[] remappedIds)
+	{
+		if (!DhSectionPos.isCubic(inputDataSource.pos)
+			|| !DhSectionPos.contains(inputDataSource.pos, this.pos))
+		{
+			throw new IllegalArgumentException("The cubic parent ["+DhSectionPos.toString(inputDataSource.pos)+"] doesn't contain this section ["+DhSectionPos.toString(this.pos)+"].");
+		}
+
+		byte parentDetailLevel = DhSectionPos.getDetailLevel(inputDataSource.pos);
+		int thisHeight = DhSectionPos.getCubicBlockHeight(this.pos);
+		boolean upperHalf = DhSectionPos.cubicSplitsVertically(parentDetailLevel) && ((DhSectionPos.getY(this.pos) & 1) != 0);
+		int parentMinY = upperHalf ? thisHeight : 0;
+
+		int minParentXPos = DhSectionPos.getX(DhSectionPos.getChildByIndex(inputDataSource.pos, 0));
+		int inputOffsetX = (DhSectionPos.getX(this.pos) == minParentXPos) ? 0 : (WIDTH / 2);
+		int minParentZPos = DhSectionPos.getZ(DhSectionPos.getChildByIndex(inputDataSource.pos, 0));
+		int inputOffsetZ = (DhSectionPos.getZ(this.pos) == minParentZPos) ? 0 : (WIDTH / 2);
+
+		boolean dataChanged = false;
+		for (int x = 0; x < WIDTH; x++)
+		{
+			for (int z = 0; z < WIDTH; z++)
+			{
+				int recipientIndex = relativePosToIndex(x, z);
+				if (!this.dataPoints[recipientIndex].isEmpty())
+				{
+					// never replace data that is already present
+					continue;
+				}
+
+				int inputIndex = relativePosToIndex((x / 2) + inputOffsetX, (z / 2) + inputOffsetZ);
+				LongArrayList clipped = clipColumn(inputDataSource.dataPoints[inputIndex], parentMinY, parentMinY + thisHeight, -parentMinY);
+				if (clipped.isEmpty())
+				{
+					continue;
+				}
+
+				for (int i = 0; i < clipped.size(); i++)
+				{
+					clipped.set(i, FullDataPointUtil.remap(remappedIds, clipped.getLong(i)));
+				}
+
+				this.dataPoints[recipientIndex].addAll(clipped);
+				this.columnGenerationSteps.set(recipientIndex, EDhApiWorldGenerationStep.DOWN_SAMPLED.value);
+				this.columnWorldCompressionMode.set(recipientIndex, inputDataSource.columnWorldCompressionMode.getByte(inputIndex));
+				this.isEmpty = false;
+				dataChanged = true;
+			}
+		}
+
+		return dataChanged;
+	}
+
+	/** @return a copy of the column with every data point moved up by the given number of blocks */
+	public static LongArrayList offsetColumn(LongArrayList column, int addY)
+	{
+		LongArrayList offsetColumn = new LongArrayList(column.size());
+		for (int i = 0; i < column.size(); i++)
+		{
+			long dataPoint = column.getLong(i);
+			offsetColumn.add(FullDataPointUtil.setBottomY(dataPoint, FullDataPointUtil.getBottomY(dataPoint) + addY));
+		}
+		return offsetColumn;
+	}
+
+	/**
+	 * @return the parts of the column's data points that lie inside [minY, maxYExclusive),
+	 * moved by addY, still ordered top to bottom
+	 */
+	public static LongArrayList clipColumn(LongArrayList column, int minY, int maxYExclusive, int addY)
+	{
+		LongArrayList clipped = new LongArrayList();
+		for (int i = 0; i < column.size(); i++)
+		{
+			long dataPoint = column.getLong(i);
+			if (dataPoint == FullDataPointUtil.EMPTY_DATA_POINT)
+			{
+				continue;
+			}
+
+			int bottomY = FullDataPointUtil.getBottomY(dataPoint);
+			int topY = bottomY + FullDataPointUtil.getHeight(dataPoint);
+			int clippedBottom = Math.max(bottomY, minY);
+			int clippedTop = Math.min(topY, maxYExclusive);
+			if (clippedTop <= clippedBottom)
+			{
+				continue;
+			}
+
+			dataPoint = FullDataPointUtil.setBottomY(dataPoint, clippedBottom + addY);
+			dataPoint = FullDataPointUtil.setHeight(dataPoint, clippedTop - clippedBottom);
+			clipped.add(dataPoint);
+		}
+		return clipped;
+	}
+
+	/**
+	 * @param upperColumn data points above every data point of the lower column, ordered top to bottom
+	 * @param lowerColumn ordered top to bottom
+	 * @return the combined column, top to bottom. Touching data points with the same block, biome and light at the seam become one.
+	 */
+	public static LongArrayList concatColumns(LongArrayList upperColumn, LongArrayList lowerColumn)
+	{
+		LongArrayList combined = new LongArrayList(upperColumn.size() + lowerColumn.size());
+		combined.addAll(upperColumn);
+
+		int lowerStart = 0;
+		if (!upperColumn.isEmpty() && !lowerColumn.isEmpty())
+		{
+			long seamUpper = upperColumn.getLong(upperColumn.size() - 1);
+			long seamLower = lowerColumn.getLong(0);
+			boolean touching = FullDataPointUtil.getBottomY(seamUpper) == FullDataPointUtil.getBottomY(seamLower) + FullDataPointUtil.getHeight(seamLower);
+			boolean sameContent = FullDataPointUtil.getId(seamUpper) == FullDataPointUtil.getId(seamLower)
+				&& FullDataPointUtil.getBlockLight(seamUpper) == FullDataPointUtil.getBlockLight(seamLower)
+				&& FullDataPointUtil.getSkyLight(seamUpper) == FullDataPointUtil.getSkyLight(seamLower);
+			if (touching && sameContent)
+			{
+				long merged = FullDataPointUtil.setBottomY(seamUpper, FullDataPointUtil.getBottomY(seamLower));
+				merged = FullDataPointUtil.setHeight(merged, FullDataPointUtil.getHeight(seamUpper) + FullDataPointUtil.getHeight(seamLower));
+				combined.set(combined.size() - 1, merged);
+				lowerStart = 1;
+			}
+		}
+
+		for (int i = lowerStart; i < lowerColumn.size(); i++)
+		{
+			combined.add(lowerColumn.getLong(i));
+		}
+		return combined;
+	}
+
+	//endregion cubic merges
+
+
+
 	//===================//
 	// adjacent clearing //
 	//===================//

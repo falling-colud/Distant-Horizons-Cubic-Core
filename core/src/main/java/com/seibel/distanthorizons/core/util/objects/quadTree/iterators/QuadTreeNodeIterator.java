@@ -81,7 +81,7 @@ public class QuadTreeNodeIterator<T> implements Iterator<QuadNode<T>>
 					continue;
 				}
 				
-				for (int i = 0; i < 4; i++)
+				for (int i = 0; i < parentNode.getChildSlotCount(); i++)
 				{
 					QuadNode<T> childNode = parentNode.getChildByIndex(i);
 					if (childNode != null)
@@ -147,7 +147,7 @@ public class QuadTreeNodeIterator<T> implements Iterator<QuadNode<T>>
 					}
 					
 					
-					for (int i = 0; i < 4; i++)
+					for (int i = 0; i < parentNode.getChildSlotCount(); i++)
 					{
 						QuadNode<T> childNode = parentNode.getChildByIndex(i);
 						if (childNode == null)

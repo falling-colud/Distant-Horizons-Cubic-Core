@@ -37,7 +37,7 @@ public class QuadNodeChildIndexIterator<T> implements Iterator<Integer>
 		if (DhSectionPos.getDetailLevel(parentNode.sectionPos) > parentNode.parentTreeLeafDetailLevel)
 		{
 			// go over each child pos
-			for (int i = 0; i < 4; i++)
+			for (int i = 0; i < parentNode.getChildSlotCount(); i++)
 			{
 				// add index to queue if either not null or we want to return null values as well
 				if (returnNullChildPos || parentNode.getChildByIndex(i) != null)

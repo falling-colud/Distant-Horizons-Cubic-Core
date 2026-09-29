@@ -48,33 +48,14 @@ public class QuadNode<T>
 	
 	
 	/**
-	 * North West <br>
-	 * index 0 <br>
-	 * relative pos (0,0)
+	 * The child nodes, indexed as {@link DhSectionPos#getChildByIndex(long, int)} indexes them: <br>
+	 * bit 0 = +X, bit 1 = +Z, bit 2 = +Y (cubic positions that split vertically only). <br>
+	 * Null until the first child is created.
 	 */
 	@Nullable
-	public QuadNode<T> nwChild;
-	/**
-	 * North East <br>
-	 * index 1 <br>
-	 * relative (1,0)
-	 */
-	@Nullable
-	public QuadNode<T> neChild;
-	/**
-	 * South West <br>
-	 * index 2 <br>
-	 * relative (0,1)
-	 */
-	@Nullable
-	public QuadNode<T> swChild;
-	/**
-	 * South East <br>
-	 * index 3 <br>
-	 * relative (1,1)
-	 */
-	@Nullable
-	public QuadNode<T> seChild;
+	private QuadNode<T>[] children;
+	/** how many children this node's position can have: 4, or 8 for a cubic position that splits vertically */
+	private final int childSlotCount;
 	
 	
 	
@@ -82,6 +63,7 @@ public class QuadNode<T>
 	{
 		this.sectionPos = sectionPos;
 		this.parentTreeLeafDetailLevel = parentTreeLeafDetailLevel;
+		this.childSlotCount = (DhSectionPos.getDetailLevel(sectionPos) > 0) ? DhSectionPos.getChildCount(sectionPos) : 0;
 	}
 	
 	
@@ -89,13 +71,25 @@ public class QuadNode<T>
 	/** @return the number of non-null direct child nodes */
 	public int getDirectChildCount()
 	{
+		QuadNode<T>[] children = this.children;
+		if (children == null)
+		{
+			return 0;
+		}
+		
 		int count = 0;
-		if (this.nwChild != null) { count++; }
-		if (this.neChild != null) { count++; }
-		if (this.swChild != null) { count++; }
-		if (this.seChild != null) { count++; }
+		for (int i = 0; i < children.length; i++)
+		{
+			if (children[i] != null)
+			{
+				count++;
+			}
+		}
 		return count;
 	}
+	
+	/** @return how many children this node's position can have: 4, or 8 for a cubic position that splits vertically */
+	public int getChildSlotCount() { return this.childSlotCount; }
 	
 	/**
 	 * Use {@link QuadNode#getNonNullChildCount()} if you want the number of non-null child values.
@@ -105,7 +99,7 @@ public class QuadNode<T>
 	public int getTotalChildCount()
 	{
 		int count = 0;
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < this.childSlotCount; i++)
 		{
 			if (this.getChildByIndex(i) != null)
 			{
@@ -119,7 +113,7 @@ public class QuadNode<T>
 	public int getNonNullChildCount()
 	{
 		int count = 0;
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < this.childSlotCount; i++)
 		{
 			QuadNode<T> child = this.getChildByIndex(i);
 			if (child != null && (child.value != null || child.getNonNullChildCount() != 0))
@@ -133,32 +127,26 @@ public class QuadNode<T>
 	
 	
 	/**
-	 * Returns the DhLodPos 1 detail level lower <br><br>
+	 * Returns the child node 1 detail level lower <br><br>
 	 *
 	 * Relative child positions returned for each index: <br>
 	 * 0 = (0,0) - North West <br>
 	 * 1 = (1,0) - South West <br>
 	 * 2 = (0,1) - North East <br>
 	 * 3 = (1,1) - South East <br>
+	 * 4-7 = the same for the upper half of a cubic position that splits vertically
 	 *
-	 * @param child0to3 must be an int between 0 and 3
+	 * @param childIndex must be an int between 0 and {@link #getChildSlotCount()} - 1
 	 */
-	public @Nullable QuadNode<T> getChildByIndex(int child0to3) throws IllegalArgumentException
+	public @Nullable QuadNode<T> getChildByIndex(int childIndex) throws IllegalArgumentException
 	{
-		switch (child0to3)
+		if (childIndex < 0 || childIndex >= this.childSlotCount)
 		{
-			case 0:
-				return this.nwChild;
-			case 1:
-				return this.swChild;
-			case 2:
-				return this.neChild;
-			case 3:
-				return this.seChild;
-			
-			default:
-				throw new IllegalArgumentException("child0to3 must be between 0 and 3");
+			throw new IllegalArgumentException("childIndex must be between 0 and " + (this.childSlotCount - 1) + ", given [" + childIndex + "].");
 		}
+		
+		QuadNode<T>[] children = this.children;
+		return (children != null) ? children[childIndex] : null;
 	}
 	
 	
@@ -239,68 +227,40 @@ public class QuadNode<T>
 
 //			LOGGER.info((replaceValue ? "set " : "get ")+inputSectionPos+" center block: "+inputSectionPos.getCenter().getCornerBlockPos()+", this pos: "+this.sectionPos+" this center block: "+this.sectionPos.getCenter().getCornerBlockPos());
 			
-			long nwPos = DhSectionPos.getChildByIndex(this.sectionPos, 0);
-			long swPos = DhSectionPos.getChildByIndex(this.sectionPos, 1);
-			long nePos = DhSectionPos.getChildByIndex(this.sectionPos, 2);
-			long sePos = DhSectionPos.getChildByIndex(this.sectionPos, 3);
+			// find the child that contains the input position
+			long containingChildPos = DhSectionPos.convertToDetailLevel(inputSectionPos, (byte) (DhSectionPos.getDetailLevel(this.sectionPos) - 1));
+			int childIndex = DhSectionPos.getChildIndexOfParent(containingChildPos);
+			long childPos = DhSectionPos.getChildByIndex(this.sectionPos, childIndex);
+			if (childPos != containingChildPos)
+			{
+				throw new IllegalStateException("input position ["+DhSectionPos.toString(inputSectionPos)+"] not contained by any child of ["+DhSectionPos.toString(this.sectionPos)+"]. This should've been caught by the contains check before this point.");
+			}
 			
-			// look for the child that contains the input position (there may be a faster way to do this, but this works for now)
-			QuadNode<T> childNode;
-			if (DhSectionPos.contains(nwPos, inputSectionPos))
+			QuadNode<T> childNode = this.getChildByIndex(childIndex);
+			if (replaceValue && childNode == null)
 			{
-				// there's a bunch of duplicate code between the 4 children, but the code works, so leaving it duplicated will be fine
-				
-				if (replaceValue && this.nwChild == null)
-				{
-					// if no node exists for this position, but we want to insert a new value at this position, create a new node
-					this.nwChild = new QuadNode<>(nwPos, this.parentTreeLeafDetailLevel);
-				}
-				childNode = this.nwChild;
-				
-				// childNode should only be null when replaceValue = false and the end of a node chain has been reached
-				return (childNode != null) ? childNode.getOrSetValue(inputSectionPos, replaceValue, newValue) : null;
+				// if no node exists for this position, but we want to insert a new value at this position, create a new node
+				childNode = new QuadNode<>(childPos, this.parentTreeLeafDetailLevel);
+				this.setChild(childIndex, childNode);
 			}
-			else if (DhSectionPos.contains(swPos, inputSectionPos))
-			{
-				if (replaceValue && this.swChild == null)
-				{
-					// if no node exists for this position, but we want to insert a new value at this position, create a new node
-					this.swChild = new QuadNode<>(swPos, this.parentTreeLeafDetailLevel);
-				}
-				childNode = this.swChild;
-				
-				// childNode should only be null when replaceValue = false and the end of a node chain has been reached
-				return (childNode != null) ? childNode.getOrSetValue(inputSectionPos, replaceValue, newValue) : null;
-			}
-			else if (DhSectionPos.contains(nePos, inputSectionPos))
-			{
-				if (replaceValue && this.neChild == null)
-				{
-					// if no node exists for this position, but we want to insert a new value at this position, create a new node
-					this.neChild = new QuadNode<>(nePos, this.parentTreeLeafDetailLevel);
-				}
-				childNode = this.neChild;
-				
-				// childNode should only be null when replaceValue = false and the end of a node chain has been reached
-				return (childNode != null) ? childNode.getOrSetValue(inputSectionPos, replaceValue, newValue) : null;
-			}
-			else if (DhSectionPos.contains(sePos, inputSectionPos))
-			{
-				if (replaceValue && this.seChild == null)
-				{
-					// if no node exists for this position, but we want to insert a new value at this position, create a new node
-					this.seChild = new QuadNode<>(sePos, this.parentTreeLeafDetailLevel);
-				}
-				childNode = this.seChild;
-				
-				// childNode should only be null when replaceValue = false and the end of a node chain has been reached
-				return (childNode != null) ? childNode.getOrSetValue(inputSectionPos, replaceValue, newValue) : null;
-			}
-			else
-			{
-				throw new IllegalStateException("input position not contained by any node children. This should've been caught by the this.sectionPos.contains(inputPos) assert before this point.");
-			}
+			
+			// childNode should only be null when replaceValue = false and the end of a node chain has been reached
+			return (childNode != null) ? childNode.getOrSetValue(inputSectionPos, replaceValue, newValue) : null;
 		}
+	}
+	
+	@SuppressWarnings("unchecked")
+	private void setChild(int childIndex, @Nullable QuadNode<T> childNode)
+	{
+		if (this.children == null)
+		{
+			if (childNode == null)
+			{
+				return;
+			}
+			this.children = (QuadNode<T>[]) new QuadNode[this.childSlotCount];
+		}
+		this.children[childIndex] = childNode;
 	}
 	
 	
@@ -327,40 +287,31 @@ public class QuadNode<T>
 	/** @param removedItemConsumer is only fired for non-null nodes, however the value passed in may be null */
 	public void deleteAllChildren(@Nullable Consumer<? super T> removedItemConsumer)
 	{
-		for (int i = 0; i < 4; i++)
+		QuadNode<T>[] children = this.children;
+		if (children == null)
 		{
-			QuadNode<T> childNode = this.getChildByIndex(i);
+			return;
+		}
+		
+		for (int i = 0; i < children.length; i++)
+		{
+			QuadNode<T> childNode = children[i];
 			if (childNode != null)
 			{
 				childNode.deleteAllChildren(removedItemConsumer);
 			}
 		}
 		
-		
-		
-		if (this.nwChild != null && removedItemConsumer != null)
+		for (int i = 0; i < children.length; i++)
 		{
-			removedItemConsumer.accept(this.nwChild.value);
+			QuadNode<T> childNode = children[i];
+			if (childNode != null && removedItemConsumer != null)
+			{
+				removedItemConsumer.accept(childNode.value);
+			}
+			children[i] = null;
 		}
-		this.nwChild = null;
-		
-		if (this.neChild != null && removedItemConsumer != null)
-		{
-			removedItemConsumer.accept(this.neChild.value);
-		}
-		this.neChild = null;
-		
-		if (this.seChild != null && removedItemConsumer != null)
-		{
-			removedItemConsumer.accept(this.seChild.value);
-		}
-		this.seChild = null;
-		
-		if (this.swChild != null && removedItemConsumer != null)
-		{
-			removedItemConsumer.accept(this.swChild.value);
-		}
-		this.swChild = null;
+		this.children = null;
 	}
 	
 	

@@ -92,6 +92,15 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	 * section drawn in place of missing children replaces all of them, as in 2D levels.
 	 */
 	public static volatile boolean cubicOctantMasksSupported = false;
+
+	/**
+	 * Cubic levels: how often a section drawn now, respectively one that isn't, is rebuilt at most
+	 * when its data changes. Every change to a section also rebuilds its six neighbours, and changes
+	 * propagate up through every detail level, so while terrain is generated or handed over a section
+	 * can be asked for a rebuild many times a second; the requests in between are merged into one.
+	 */
+	private static final long CUBIC_RENDERED_RELOAD_INTERVAL_MS = 500;
+	private static final long CUBIC_HIDDEN_RELOAD_INTERVAL_MS = 5_000;
 	
 	
 	public final int blockRenderDistanceDiameter;
@@ -923,6 +932,19 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 				// the section only needs to be updated if a buffer is currently present
 				if (renderSection.gpuUploadComplete())
 				{
+					if (DhSectionPos.isCubic(pos))
+					{
+						long nowMs = System.currentTimeMillis();
+						long intervalMs = renderSection.getRenderingEnabled() ? CUBIC_RENDERED_RELOAD_INTERVAL_MS : CUBIC_HIDDEN_RELOAD_INTERVAL_MS;
+						if (nowMs - renderSection.lastReloadMs < intervalMs)
+						{
+							// rebuilt a moment ago, this and any further requests until then become one rebuild
+							positionsToRequeue.add(pos);
+							continue;
+						}
+						renderSection.lastReloadMs = nowMs;
+					}
+
 					if (renderSection.gpuUploadInProgress()
 						|| !renderSection.uploadRenderDataToGpuAsync())
 					{

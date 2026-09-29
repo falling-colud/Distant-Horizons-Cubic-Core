@@ -106,6 +106,8 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 	 * 0 when the section is drawn whole. Set by the {@link LodQuadTree} every tick.
 	 */
 	public volatile int renderOctantMask = 0;
+	/** When this section's render data was last rebuilt because its data changed, see {@link LodQuadTree} reloading. */
+	public long lastReloadMs = 0;
 	
 	/** this reference is necessary so we can determine what VBO to render */
 	public LodBufferContainer renderBufferContainer; 

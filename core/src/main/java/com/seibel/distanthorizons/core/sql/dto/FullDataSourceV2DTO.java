@@ -76,7 +76,17 @@ public class FullDataSourceV2DTO
 	public ByteArrayList compressedSouthAdjDataByteArray;
 	public ByteArrayList compressedEastAdjDataByteArray;
 	public ByteArrayList compressedWestAdjDataByteArray;
-	
+	/**
+	 * The data points touching the top of a cubic section, one per column at most.
+	 * Empty for 2D sections.
+	 */
+	public ByteArrayList compressedUpAdjDataByteArray;
+	/**
+	 * The data points touching the bottom of a cubic section, one per column at most.
+	 * Empty for 2D sections.
+	 */
+	public ByteArrayList compressedDownAdjDataByteArray;
+
 	/** @see EDhApiWorldGenerationStep */
 	public ByteArrayList compressedColumnGenStepByteArray;
 	/** @see EDhApiWorldCompressionMode */
@@ -120,6 +130,11 @@ public class FullDataSourceV2DTO
 		writeDataSourceDataArrayToBlobV2(dataSource.dataPoints, dto.compressedSouthAdjDataByteArray, EDhDirection.SOUTH, compressionModeEnum);
 		writeDataSourceDataArrayToBlobV2(dataSource.dataPoints, dto.compressedEastAdjDataByteArray, EDhDirection.EAST, compressionModeEnum);
 		writeDataSourceDataArrayToBlobV2(dataSource.dataPoints, dto.compressedWestAdjDataByteArray, EDhDirection.WEST, compressionModeEnum);
+		if (DhSectionPos.isCubic(dataSource.getPos()))
+		{
+			writeVerticalAdjacentDataToBlob(dataSource.dataPoints, dto.compressedUpAdjDataByteArray, EDhDirection.UP, DhSectionPos.getCubicBlockHeight(dataSource.getPos()), compressionModeEnum);
+			writeVerticalAdjacentDataToBlob(dataSource.dataPoints, dto.compressedDownAdjDataByteArray, EDhDirection.DOWN, DhSectionPos.getCubicBlockHeight(dataSource.getPos()), compressionModeEnum);
+		}
 		
 		// populate individual variables
 		{
@@ -143,7 +158,7 @@ public class FullDataSourceV2DTO
 	public static FullDataSourceV2DTO CreateEmptyDataSourceForDecoding() { return new FullDataSourceV2DTO(); }
 	private FullDataSourceV2DTO() 
 	{
-		super(ARRAY_LIST_POOL, 8, 0, 0, 0, 0);
+		super(ARRAY_LIST_POOL, 10, 0, 0, 0, 0);
 		
 		// Expected sizes here are 0 since we don't know how big these arrays need to be,
 		// they depend on compression settings and world complexity.
@@ -156,7 +171,10 @@ public class FullDataSourceV2DTO
 		this.compressedSouthAdjDataByteArray = this.pooledArraysCheckout.getByteArray(5, 0);
 		this.compressedEastAdjDataByteArray = this.pooledArraysCheckout.getByteArray(6, 0);
 		this.compressedWestAdjDataByteArray = this.pooledArraysCheckout.getByteArray(7, 0);
-	}
+
+		this.compressedUpAdjDataByteArray = this.pooledArraysCheckout.getByteArray(8, 0);
+		this.compressedDownAdjDataByteArray = this.pooledArraysCheckout.getByteArray(9, 0);
+}
 	
 	
 	
@@ -266,7 +284,14 @@ public class FullDataSourceV2DTO
 			// this is done so data sources down-stream
 			// can all be handled identically regardless of
 			// whether they're a full or partial data source
-			readBlobToDataSourceDataArrayV2(this.compressedDataByteArray, dataSource.dataPoints, direction, compressionModeEnum);	
+			if (direction == EDhDirection.UP || direction == EDhDirection.DOWN)
+			{
+				readBlobToDataSourceDataArrayV2(this.compressedDataByteArray, dataSource.dataPoints, 0, FullDataSourceV2.WIDTH, 0, FullDataSourceV2.WIDTH, compressionModeEnum);
+			}
+			else
+			{
+				readBlobToDataSourceDataArrayV2(this.compressedDataByteArray, dataSource.dataPoints, direction, compressionModeEnum);
+			}
 		}
 		
 		
@@ -397,7 +422,54 @@ public class FullDataSourceV2DTO
 			minZ = 1;
 			maxZ = FullDataSourceV2.WIDTH-1;
 		}
-		
+
+		writeDataSourceDataArrayToBlobV2(inputDataArray, outputByteArray, minX, maxX, minZ, maxZ, compressionModeEnum);
+	}
+
+	/**
+	 * Writes the data points that touch the top ({@link EDhDirection#UP}) or bottom ({@link EDhDirection#DOWN})
+	 * of a cubic section, at most one per column, for every column.
+	 * That's all a vertically adjacent section needs to cull and light the faces between the two.
+	 */
+	private static void writeVerticalAdjacentDataToBlob(
+			LongArrayList[] inputDataArray, ByteArrayList outputByteArray,
+			EDhDirection direction, int sectionBlockHeight, EDhApiDataCompressionMode compressionModeEnum) throws IOException
+	{
+		LongArrayList[] boundaryColumns = new LongArrayList[inputDataArray.length];
+		for (int i = 0; i < inputDataArray.length; i++)
+		{
+			boundaryColumns[i] = new LongArrayList(1);
+
+			LongArrayList column = inputDataArray[i];
+			if (column == null || column.isEmpty())
+			{
+				continue;
+			}
+
+			// columns are ordered top to bottom
+			long dataPoint = (direction == EDhDirection.UP) ? column.getLong(0) : column.getLong(column.size() - 1);
+			if (dataPoint == FullDataPointUtil.EMPTY_DATA_POINT)
+			{
+				continue;
+			}
+
+			boolean touchesBoundary = (direction == EDhDirection.UP)
+				? (FullDataPointUtil.getBottomY(dataPoint) + FullDataPointUtil.getHeight(dataPoint) == sectionBlockHeight)
+				: (FullDataPointUtil.getBottomY(dataPoint) == 0);
+			if (touchesBoundary)
+			{
+				boundaryColumns[i].add(dataPoint);
+			}
+		}
+
+		writeDataSourceDataArrayToBlobV2(boundaryColumns, outputByteArray, 0, FullDataSourceV2.WIDTH, 0, FullDataSourceV2.WIDTH, compressionModeEnum);
+	}
+
+	private static void writeDataSourceDataArrayToBlobV2(
+			LongArrayList[] inputDataArray, ByteArrayList outputByteArray,
+			int minX, int maxX, int minZ, int maxZ,
+			EDhApiDataCompressionMode compressionModeEnum) throws IOException
+	{
 		try (DhDataOutputStream compressedOut = DhDataOutputStream.create(compressionModeEnum, outputByteArray))
 		{
 			// this method would be simpler if we allocated a bunch of temporary arrays,
@@ -540,8 +612,16 @@ public class FullDataSourceV2DTO
 			minZ = 1;
 			maxZ = FullDataSourceV2.WIDTH-1;
 		}
-		
-		
+
+		readBlobToDataSourceDataArrayV2(inputCompressedDataByteArray, outputDataLongArray, minX, maxX, minZ, maxZ, compressionModeEnum);
+	}
+	private static void readBlobToDataSourceDataArrayV2(
+			ByteArrayList inputCompressedDataByteArray,
+			LongArrayList[] outputDataLongArray,
+			int minX, int maxX, int minZ, int maxZ,
+			EDhApiDataCompressionMode compressionModeEnum)
+			throws IOException, DataCorruptedException
+	{
 		try (PhantomArrayListCheckout checkout = ARRAY_LIST_POOL.checkoutByteArrays(1);
 			DhDataInputStream compressedIn = DhDataInputStream.create(inputCompressedDataByteArray, compressionModeEnum, checkout))
 		{
@@ -756,7 +836,15 @@ public class FullDataSourceV2DTO
 		out.writeBytes(this.compressedEastAdjDataByteArray.elements(), 0, this.compressedEastAdjDataByteArray.size());
 		out.writeInt(this.compressedWestAdjDataByteArray.size());
 		out.writeBytes(this.compressedWestAdjDataByteArray.elements(), 0, this.compressedWestAdjDataByteArray.size());
-		
+		if (DhSectionPos.isCubic(this.pos))
+		{
+			// only cubic positions carry these, so 2D data is sent exactly as before
+			out.writeInt(this.compressedUpAdjDataByteArray.size());
+			out.writeBytes(this.compressedUpAdjDataByteArray.elements(), 0, this.compressedUpAdjDataByteArray.size());
+			out.writeInt(this.compressedDownAdjDataByteArray.size());
+			out.writeBytes(this.compressedDownAdjDataByteArray.elements(), 0, this.compressedDownAdjDataByteArray.size());
+		}
+
 		// world gen
 		out.writeInt(this.compressedColumnGenStepByteArray.size());
 		out.writeBytes(this.compressedColumnGenStepByteArray.elements(), 0, this.compressedColumnGenStepByteArray.size());
@@ -797,7 +885,14 @@ public class FullDataSourceV2DTO
 		in.readBytes(this.compressedEastAdjDataByteArray.elements(), 0, this.compressedEastAdjDataByteArray.size());
 		this.compressedWestAdjDataByteArray.size(in.readInt());
 		in.readBytes(this.compressedWestAdjDataByteArray.elements(), 0, this.compressedWestAdjDataByteArray.size());
-		
+		if (DhSectionPos.isCubic(this.pos))
+		{
+			this.compressedUpAdjDataByteArray.size(in.readInt());
+			in.readBytes(this.compressedUpAdjDataByteArray.elements(), 0, this.compressedUpAdjDataByteArray.size());
+			this.compressedDownAdjDataByteArray.size(in.readInt());
+			in.readBytes(this.compressedDownAdjDataByteArray.elements(), 0, this.compressedDownAdjDataByteArray.size());
+		}
+
 		// world gen
 		this.compressedColumnGenStepByteArray.size(in.readInt());
 		in.readBytes(this.compressedColumnGenStepByteArray.elements(), 0, this.compressedColumnGenStepByteArray.size());

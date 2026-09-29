@@ -34,6 +34,7 @@ import com.seibel.distanthorizons.core.logging.DhLogger;
 import com.seibel.distanthorizons.core.logging.DhLoggerBuilder;
 import com.seibel.distanthorizons.core.pos.DhSectionPos;
 import com.seibel.distanthorizons.core.util.LodUtil;
+import com.seibel.distanthorizons.core.util.threading.PriorityTaskPicker;
 import com.seibel.distanthorizons.core.util.threading.ThreadPoolUtil;
 import com.seibel.distanthorizons.core.world.AbstractDhWorld;
 import com.seibel.distanthorizons.core.world.DhApiWorldProxy;
@@ -41,16 +42,23 @@ import com.seibel.distanthorizons.core.wrapperInterfaces.world.ILevelWrapper;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Turns real terrain handed over through {@link DhApiCubic#updateCubicChunk} into
  * cubic leaf sections (64 x 64 x 64 blocks, one chunk's 16 x 16 columns at a time)
  * and queues them for saving. Updates of the same section are merged in memory first,
- * see {@link AbstractDhLevel#queueCubicChunkDataSource}.
+ * see {@link AbstractDhLevel#queueCubicChunkDataSource}. <br><br>
+ *
+ * Updates of the same part of a chunk are applied one after another in the order they were
+ * handed over, and one waiting to be applied is replaced by a newer one, so a quick second
+ * update can never be overtaken by the older one on another thread.
  */
 public class CubicChunkUpdater implements DhApiCubic.ICubicChunkUpdater
 {
@@ -62,6 +70,55 @@ public class CubicChunkUpdater implements DhApiCubic.ICubicChunkUpdater
 	private static final int LEAF_HEIGHT = DhSectionPos.getCubicBlockHeight(DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL);
 
 	private static final AtomicBoolean INVALID_RANGE_LOGGED = new AtomicBoolean(false);
+
+	/** chunks handed over and not yet turned into LOD data */
+	private final AtomicInteger buildingCount = new AtomicInteger(0);
+
+	/** the chunk parts waiting to be applied or being applied, guarded by itself */
+	private final HashMap<PartKey, Slot> slotByPart = new HashMap<>();
+
+	/** one part of a chunk of one level */
+	private static final class PartKey
+	{
+		private final IDhLevel level;
+		private final int chunkX;
+		private final int chunkZ;
+		private final int bottomY;
+		private final int topY;
+
+		PartKey(IDhLevel level, DhApiChunk chunk)
+		{
+			this.level = level;
+			this.chunkX = chunk.chunkPosX;
+			this.chunkZ = chunk.chunkPosZ;
+			this.bottomY = chunk.bottomYBlockPos;
+			this.topY = chunk.topYBlockPos;
+		}
+
+		@Override
+		public boolean equals(Object obj)
+		{
+			if (!(obj instanceof PartKey))
+			{
+				return false;
+			}
+			PartKey other = (PartKey) obj;
+			return this.level == other.level
+				&& this.chunkX == other.chunkX
+				&& this.chunkZ == other.chunkZ
+				&& this.bottomY == other.bottomY
+				&& this.topY == other.topY;
+		}
+
+		@Override
+		public int hashCode() { return Objects.hash(System.identityHashCode(this.level), this.chunkX, this.chunkZ, this.bottomY, this.topY); }
+	}
+
+	private static final class Slot
+	{
+		/** the newest update not applied yet, null if none */
+		DhApiChunk next;
+	}
 
 
 
@@ -109,14 +166,92 @@ public class CubicChunkUpdater implements DhApiCubic.ICubicChunkUpdater
 			return;
 		}
 
+		PartKey key = new PartKey(dhLevel, chunk);
+		boolean startApplying;
+		synchronized (this.slotByPart)
+		{
+			Slot slot = this.slotByPart.get(key);
+			startApplying = (slot == null);
+			if (startApplying)
+			{
+				slot = new Slot();
+				this.slotByPart.put(key, slot);
+			}
+
+			if (slot.next == null)
+			{
+				this.buildingCount.incrementAndGet();
+			}
+			// an update still waiting is replaced, the newer one covers the same blocks
+			slot.next = chunk;
+		}
+
+		if (!startApplying)
+		{
+			// the task applying this part picks it up once it's done with the one before
+			return;
+		}
+
 		try
 		{
-			executor.execute(() -> buildAndQueue((AbstractDhLevel) dhLevel, chunk));
+			executor.execute(() -> this.applyInOrder((AbstractDhLevel) dhLevel, key));
 		}
 		catch (RejectedExecutionException ignore)
 		{
 			// the thread pool is being resized or shut down, the chunk mod hands the chunk over again when it changes
+			synchronized (this.slotByPart)
+			{
+				Slot slot = this.slotByPart.remove(key);
+				if (slot != null && slot.next != null)
+				{
+					this.buildingCount.decrementAndGet();
+				}
+			}
 		}
+	}
+
+	/** Applies the part's updates one after another until none is waiting. */
+	private void applyInOrder(AbstractDhLevel dhLevel, PartKey key)
+	{
+		while (true)
+		{
+			DhApiChunk chunk;
+			synchronized (this.slotByPart)
+			{
+				Slot slot = this.slotByPart.get(key);
+				if (slot == null)
+				{
+					return;
+				}
+
+				chunk = slot.next;
+				slot.next = null;
+				if (chunk == null)
+				{
+					this.slotByPart.remove(key);
+					return;
+				}
+			}
+
+			try
+			{
+				buildAndQueue(dhLevel, chunk);
+			}
+			finally
+			{
+				this.buildingCount.decrementAndGet();
+			}
+		}
+	}
+
+	@Override
+	public int getPendingChunkUpdateCount()
+	{
+		// the built sections are saved through the file handler,
+		// when it falls behind they pile up in memory
+		PriorityTaskPicker.Executor fileHandler = ThreadPoolUtil.getFileHandlerExecutor();
+		int fileQueue = (fileHandler != null) ? fileHandler.getQueueSize() : 0;
+		return this.buildingCount.get() + fileQueue;
 	}
 
 	private static void buildAndQueue(AbstractDhLevel dhLevel, DhApiChunk chunk)

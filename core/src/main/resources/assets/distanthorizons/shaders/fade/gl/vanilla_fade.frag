@@ -16,6 +16,8 @@ uniform sampler2D uDhColorTexture;
 uniform float uStartFadeBlockDistance;
 uniform float uEndFadeBlockDistance;
 uniform float uMaxLevelHeight;
+// cubic levels: vertical distances are multiplied by this before fading, see RenderUtil.getCubicVerticalClipScale()
+uniform float uFadeVerticalScale;
 
 uniform bool uOnlyRenderLods;
 uniform bool uIsMcReverseZDepth;
@@ -99,7 +101,9 @@ void main()
     {
         // fade based on distance from the camera
         vec3 mcVertexWorldPos = calcViewPosition(mcFragmentDepth, uMcInvMvmProj);
-        float mcFragmentDistance = length(mcVertexWorldPos.xzy);
+        float mcFragmentDistance = (uFadeVerticalScale > 0.0)
+            ? max(length(mcVertexWorldPos.xz), abs(mcVertexWorldPos.y) * uFadeVerticalScale)
+            : length(mcVertexWorldPos.xzy);
 
 
         // Smoothly transition between combinedMcDhColor and uDhColorTexture

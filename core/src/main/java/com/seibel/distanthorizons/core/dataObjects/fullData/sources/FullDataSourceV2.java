@@ -548,18 +548,27 @@ public class FullDataSourceV2
 					// data is present, but the size is different
 					dataChanged = true;
 				}
-				
+				else if (thisGenState != inputGenState)
+				{
+					// same data, but more complete now; the step has to be saved
+					// or less complete data could replace this column later
+					dataChanged = true;
+				}
+
 				if (!dataChanged)
 				{
 					// some old data existed with the same length,
 					// we'll have to compare each datapoint.
 					// Doing a hash check has too high a chance of showing
 					// different data as the same.
+					// The input's IDs are compared as they will be once remapped onto this
+					// data source's mapping, otherwise identical data read as changed
+					// whenever the two mappings list their blocks in a different order.
 					LongArrayList oldDataList = this.dataPoints[recipientIndex];
 					for (int i = 0; i < oldDataList.size(); i++)
 					{
 						long oldDatapoint = oldDataList.getLong(i);
-						long newDatapoint = inputDataArray.getLong(i);
+						long newDatapoint = FullDataPointUtil.remap(remappedIds, inputDataArray.getLong(i));
 						if (oldDatapoint != newDatapoint)
 						{
 							dataChanged = true;
@@ -1278,6 +1287,22 @@ public class FullDataSourceV2
 	 * and may be merged into its parent
 	 */
 	public static boolean isCompleteCubicGenerationStep(byte generationStep) { return generationStep >= EDhApiWorldGenerationStep.SURFACE.value; }
+
+	/**
+	 * @return true if every column of this cubic section holds data for its whole height,
+	 * false if some are missing or only hold one of their vertical halves (see {@link #CUBIC_PARTIAL_GENERATION_STEP})
+	 */
+	public boolean isCompleteCubicData()
+	{
+		for (int i = 0; i < this.columnGenerationSteps.size(); i++)
+		{
+			if (!isCompleteCubicGenerationStep(this.columnGenerationSteps.getByte(i)))
+			{
+				return false;
+			}
+		}
+		return !this.columnGenerationSteps.isEmpty();
+	}
 
 	/**
 	 * Merges a cubic child one detail level below into this cubic section. <br><br>

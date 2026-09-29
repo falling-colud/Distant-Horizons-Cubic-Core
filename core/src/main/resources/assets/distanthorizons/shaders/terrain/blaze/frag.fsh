@@ -30,6 +30,9 @@ layout (std140) uniform fragUniformBlock
     int uNoiseDropoff;
     bool uDitherDhRendering;
     bool uNoiseEnabled;
+
+    // cubic levels: vertical distances are multiplied by this before being clipped, see RenderUtil.getCubicVerticalClipScale()
+    float uClipVerticalScale;
 };
 
 
@@ -139,7 +142,11 @@ void main()
     }
     
     float viewDist = length(vertexWorldPos);
-    
+    // the distance compared with the clip distance, a cylinder in cubic levels
+    float clipDist = (uClipVerticalScale > 0.0)
+        ? max(length(vertexWorldPos.xz), abs(vertexWorldPos.y) * uClipVerticalScale)
+        : viewDist;
+
     if (uDitherDhRendering)
     {
         // Dither out the fragment based on distance and noise.
@@ -152,7 +159,7 @@ void main()
         // if not included 1 in 16 pixels would never fade away
         worldNoise += 0.001;
         
-        float fadeStep = smoothstep(uClipDistance, uClipDistance * 1.5, viewDist);
+        float fadeStep = smoothstep(uClipDistance, uClipDistance * 1.5, clipDist);
         if (fadeStep <= worldNoise)
         {
             discard;
@@ -160,7 +167,7 @@ void main()
     }
     else
     {
-        if (viewDist < uClipDistance && uClipDistance > 0.0)
+        if (clipDist < uClipDistance && uClipDistance > 0.0)
         {
             discard;
         }

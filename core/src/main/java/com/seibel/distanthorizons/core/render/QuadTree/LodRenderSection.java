@@ -87,11 +87,19 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 	public boolean queuedMissingSectionsForRetrieval = false;
 	/**
 	 * Cubic levels only: this section was loaded and nothing has been generated or saved for it yet. <br>
-	 * It doesn't render, its parent keeps rendering in its place (cubic levels don't fill
-	 * children with copies of their parents' data), and it isn't loaded again until its
+	 * It doesn't render; its parent renders in its place if the parent's data is complete
+	 * (see {@link #dataComplete}), otherwise its space stays empty until it's generated (cubic levels
+	 * don't fill children with copies of their parents' data). It isn't loaded again until its
 	 * position is reloaded, which happens when its data arrives.
 	 */
 	public volatile boolean loadedWithoutData = false;
+	/**
+	 * Cubic levels only: every column of this section's data covers its whole height. <br>
+	 * Only such a section may render in place of children that can't render yet: a parent
+	 * that only holds the parts its children merged into it would cover them with holes.
+	 * Updated whenever the render data is built.
+	 */
+	public volatile boolean dataComplete = false;
 	
 	/** this reference is necessary so we can determine what VBO to render */
 	public LodBufferContainer renderBufferContainer; 
@@ -261,6 +269,7 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 
 			if (!hasData)
 			{
+				this.dataComplete = false;
 				this.loadedWithoutData = true;
 				// nothing to upload, the section is up to date until its position is reloaded
 				this.renderDataDirty = false;
@@ -348,6 +357,13 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 				? this.fullDataSourceProvider.get(finalPos)
 				: this.fullDataSourceProvider.getAdjForDirection(finalPos, direction.opposite()))
 		{
+			if (direction == null
+				&& fullDataSource != null
+				&& DhSectionPos.isCubic(finalPos))
+			{
+				this.dataComplete = fullDataSource.isCompleteCubicData();
+			}
+
 			ColumnRenderSource columnRenderSource = FullDataToRenderDataTransformer.transformFullDataToRenderSource(fullDataSource, this.clientLevelWrapper);
 			return columnRenderSource;
 		}

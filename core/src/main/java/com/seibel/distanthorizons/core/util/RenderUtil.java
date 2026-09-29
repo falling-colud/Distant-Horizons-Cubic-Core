@@ -21,6 +21,7 @@ package com.seibel.distanthorizons.core.util;
 
 import com.seibel.distanthorizons.api.DhApi;
 import com.seibel.distanthorizons.api.enums.config.EDhApiDepthDirection;
+import com.seibel.distanthorizons.api.methods.cubic.DhApiCubic;
 import com.seibel.distanthorizons.api.objects.math.DhApiMat4f;
 import com.seibel.distanthorizons.core.api.internal.ClientApi;
 import com.seibel.distanthorizons.core.config.Config;
@@ -198,6 +199,37 @@ public class RenderUtil
 		
 		return getNearClipPlaneDistanceInBlocks(overdraw);
 	}
+	/**
+	 * In a cubic level the game renders real terrain only within its vertical view distance
+	 * above and below the camera, usually much less than its horizontal render distance,
+	 * so the space where LODs are discarded (and vanilla terrain faded out) is a cylinder instead
+	 * of a sphere: vertical distances are multiplied by this before they're compared with the
+	 * clip distance, which scales the clip distance down to the vertical view distance.
+	 *
+	 * @return the horizontal render distance divided by the vertical view distance in a cubic level,
+	 * 0 in any other level (the clip distance applies in every direction then)
+	 */
+	public static float getCubicVerticalClipScale()
+	{
+		IClientLevelWrapper level = MC.getWrappedClientLevel();
+		if (level == null
+			|| !level.isCubicLod())
+		{
+			return 0.0f;
+		}
+
+		int verticalBlocks = DhApiCubic.getVerticalViewDistanceInBlocks(level.getWrappedMcObject());
+		int horizontalBlocks = MC_RENDER.getRenderDistance() * LodUtil.CHUNK_WIDTH;
+		if (verticalBlocks <= 0
+			|| horizontalBlocks <= 0)
+		{
+			// unknown, clip like any other level
+			return 0.0f;
+		}
+
+		return (float) horizontalBlocks / verticalBlocks;
+	}
+
 	private static float getNearClipPlaneDistanceInBlocks(float overdrawPreventionPercent)
 	{
 		int chunkRenderDistance = MC_RENDER.getRenderDistance();

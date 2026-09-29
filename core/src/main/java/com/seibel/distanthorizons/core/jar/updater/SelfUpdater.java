@@ -66,6 +66,9 @@ public class SelfUpdater
 	
 	public static File newFileLocation;
 	
+	/** see {@link #onStart()} */
+	private static final boolean CUBIC_LODS_FORK = true;
+	
 	
 	/**
 	 * Should be called on the game starting.
@@ -75,6 +78,14 @@ public class SelfUpdater
 	 */
 	public static boolean onStart()
 	{
+		// This build is the cubic LODs fork: the releases the updater finds don't have cubic LODs,
+		// updating to one would silently turn them off for every cubic chunks world.
+		if (CUBIC_LODS_FORK)
+		{
+			LOGGER.info("Distant Horizons auto update disabled: this is the cubic LODs build, official releases don't include it.");
+			return false;
+		}
+		
 		if (!Config.Client.Advanced.AutoUpdater.enableAutoUpdater.get())
 		{
 			LOGGER.info("Distant Horizons auto update disabled.");
@@ -244,6 +255,12 @@ public class SelfUpdater
 	}
 	public static boolean updateMod(String minecraftVersion, File file)
 	{
+		if (CUBIC_LODS_FORK)
+		{
+			// see onStart()
+			return false;
+		}
+		
 		EDhApiUpdateBranch updateBranch = EDhApiUpdateBranch.convertAutoToStableOrNightly(Config.Client.Advanced.AutoUpdater.updateBranch.get());
 		if (updateBranch == EDhApiUpdateBranch.STABLE)
 		{

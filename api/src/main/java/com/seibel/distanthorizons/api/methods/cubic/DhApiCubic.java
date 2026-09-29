@@ -79,10 +79,12 @@ public final class DhApiCubic
 
 
 	/** Implemented by Distant Horizons, see {@link #updateCubicChunk}. */
-	@FunctionalInterface
 	public interface ICubicChunkUpdater
 	{
 		void updateCubicChunk(IDhApiLevelWrapper levelWrapper, DhApiChunk chunk);
+
+		/** @see DhApiCubic#getPendingChunkUpdateCount() */
+		int getPendingChunkUpdateCount();
 	}
 
 
@@ -171,6 +173,18 @@ public final class DhApiCubic
 		{
 			updater.updateCubicChunk(levelWrapper, chunk);
 		}
+	}
+
+	/**
+	 * How much of the handed over terrain Distant Horizons hasn't turned into LOD data yet:
+	 * chunks waiting to be converted plus LOD writes waiting for the disk. <br>
+	 * A mod handing over a lot of terrain should wait while this is high (a few hundred),
+	 * Distant Horizons can't keep up then and anything handed over waits in memory.
+	 */
+	public static int getPendingChunkUpdateCount()
+	{
+		ICubicChunkUpdater updater = chunkUpdater;
+		return (updater != null) ? updater.getPendingChunkUpdateCount() : 0;
 	}
 
 	/** @return true if the given part of the chunk may replace LOD data. True when no predicate is set. */

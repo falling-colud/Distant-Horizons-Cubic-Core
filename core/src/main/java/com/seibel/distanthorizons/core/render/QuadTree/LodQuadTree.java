@@ -79,6 +79,11 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	 * before checking again for new tasks.
 	 */
 	private static final long QUEUE_THREAD_IDLE_WAIT_MS = 100L;
+	/**
+	 * How far the camera may move from where a world gen queuing pass started
+	 * before the pass is ended so the next one starts from where the camera is now, in blocks.
+	 */
+	private static final int STALE_QUEUING_PASS_DISTANCE_IN_BLOCKS = 256;
 	
 	
 	public final int blockRenderDistanceDiameter;
@@ -533,8 +538,18 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 					
 					// Keep looping as long as there's something to queue.
 					// This allows really fast generators to remain fed.
+					int passStartBlockY = this.playerBlockY;
 					while (!Thread.interrupted())
 					{
+						if (this.queuingPassIsStale(playerPos, passStartBlockY))
+						{
+							// The pass only knows the nodes around where it started and works through
+							// all of them before anything near the camera's new position is looked at,
+							// after a teleport or while flying that would be minutes of work far behind.
+							// Nothing is lost, the missing positions stay queued for the next pass.
+							break;
+						}
+
 						int missingPosCountBeforeQueuing = this.missingGenerationPosSet.size();
 						
 						this.startQueuedRetrievalTasks(playerPos);
@@ -715,7 +730,13 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		else
 		{
 			boolean nodeCanRender = quadNode.value != null
-									&& quadNode.value.canRender();
+									&& quadNode.value.canRender()
+									// A cubic section only stands in for its children when its own data is complete.
+									// One that only holds what some of its children merged into it would replace
+									// them all with those parts (a section is drawn whole, an 8-way split is rarely
+									// complete across a tall level); its children that can render are drawn
+									// instead and only the space of the missing ones stays empty until generated.
+									&& (!DhSectionPos.isCubic(quadNode.sectionPos) || quadNode.value.dataComplete);
 			if (nodeCanRender)
 			{
 				// not all child positions are loaded yet, this one should be rendered instead
@@ -726,7 +747,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			{
 				this.tickNodeHolder.addDisableNode(quadNode);
 			}
-			
+
 			return nodeCanRender;
 		}
 	}
@@ -897,6 +918,24 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	//=================================//
 	//region world gen
 	
+	/** @return true if the camera moved far from where a world gen queuing pass started, vertically included for cubic trees */
+	private boolean queuingPassIsStale(DhBlockPos2D passStartPos, int passStartBlockY)
+	{
+		DhBlockPos2D centerPos = this.getCenterBlockPos();
+		if (centerPos == null
+			|| passStartPos == null)
+		{
+			return false;
+		}
+
+		int movedDistance = Math.max(Math.abs(centerPos.x - passStartPos.x), Math.abs(centerPos.z - passStartPos.z));
+		if (this.isCubic())
+		{
+			movedDistance = Math.max(movedDistance, Math.abs(this.playerBlockY - passStartBlockY));
+		}
+		return movedDistance > STALE_QUEUING_PASS_DISTANCE_IN_BLOCKS;
+	}
+
 	private void startQueuedRetrievalTasks(DhBlockPos2D playerPos)
 	{
 		// sort the nodes from nearest to farthest

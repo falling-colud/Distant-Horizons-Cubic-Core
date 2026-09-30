@@ -325,8 +325,8 @@ public class FullDataToRenderDataTransformer
 				// the end has a lot of overhangs with 0 lighting above the void, which look broken with
 				// the current cave culling logic (this could probably be improved, but just skipping it works best for now)
 				&& !levelWrapper.getDimensionType().isTheEnd()
-				// Cubic levels have caves the camera can be in at any height, dropping them here
-				// would hide every cave and cavern for good. Dark geometry is skipped when drawing instead.
+				// Cubic levels have caves the camera can be in at any height (and caverns, dark from
+				// top to bottom), filling them here would hide every cave and cavern for good.
 				&& !DhSectionPos.isCubic(fullDataSource.getPos())
 			);
 		

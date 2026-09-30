@@ -109,6 +109,8 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	 * Cubic trees use it for their vertical window and every distance.
 	 */
 	private volatile int playerBlockY = 0;
+	/** Whether a detail level of the current tree walk was raised for a zoomed in camera. */
+	private volatile boolean zoomUsedThisPass = false;
 	@WillNotClose
 	private final FullDataSourceProviderV2 fullDataSourceProvider;
 	
@@ -309,6 +311,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	{
 		// this data will be updated as we walk through the tree
 		this.tickNodeHolder.clear();
+		this.zoomUsedThisPass = false;
 		
 		
 		//===================//
@@ -693,7 +696,11 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			// detail levels finer than their own distance alone would request.
 			// Rendering them at the finer level keeps the tree consistent and only
 			// affects a thin shell of sections around the zoom cone.
-			if (CameraZoom.INSTANCE.magnification > CameraZoom.NOT_ZOOMED_MAGNIFICATION)
+			// The zoom is read from the render thread's camera, which can change while the tree is walked
+			// (the first frames after a level loads, a spyglass): a parent may have been refined for a zoom
+			// that is gone by the time its children are looked at.
+			if (CameraZoom.INSTANCE.magnification > CameraZoom.NOT_ZOOMED_MAGNIFICATION
+				|| this.zoomUsedThisPass)
 			{
 				return this.onDesiredDetailLevel(quadNode, parentNode);
 			}
@@ -962,6 +969,7 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	private void loadQueuedSections(DhBlockPos2D playerPos, HashSet<LodRenderSection> nodesNeedingLoading)
 	{
 		ArrayList<LodRenderSection> loadSectionList = new ArrayList<>(nodesNeedingLoading);
+		int playerBlockY = this.playerBlockY; // read once, see startQueuedRetrievalTasks
 		loadSectionList.sort((LodRenderSection a, LodRenderSection b) ->
 		{
 			// lower-detail LODs first
@@ -973,8 +981,8 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			}
 			
 			// closer LODs first
-			long aDist = this.getSortingDistance(a.pos, playerPos);
-			long bDist = this.getSortingDistance(b.pos, playerPos);
+			long aDist = this.getSortingDistance(a.pos, playerPos, playerBlockY);
+			long bDist = this.getSortingDistance(b.pos, playerPos, playerBlockY);
 			return Long.compare(aDist, bDist); // smaller numbers first
 		});
 
@@ -1024,10 +1032,12 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		// sort the nodes from nearest to farthest
 		this.sortedMissingPosList.clear();
 		this.sortedMissingPosList.addAll(this.missingGenerationPosSet);
+		// read once: the tree tick moves it while this sorts, and a comparator that changes its mind mid-sort throws
+		int playerBlockY = this.playerBlockY;
 		this.sortedMissingPosList.sort((posA, posB) ->
 		{
-			long aDist = this.getSortingDistance(posA, playerPos);
-			long bDist = this.getSortingDistance(posB, playerPos);
+			long aDist = this.getSortingDistance(posA, playerPos, playerBlockY);
+			long bDist = this.getSortingDistance(posB, playerPos, playerBlockY);
 			return Long.compare(aDist, bDist);
 		});
 		
@@ -1403,10 +1413,12 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		{
 			// LODs visible through a zoomed in camera appear closer than they actually are,
 			// using the magnified distance gives them the detail they'd have if the player walked up to them
-			if (CameraZoom.INSTANCE.magnification > CameraZoom.NOT_ZOOMED_MAGNIFICATION
+			double magnification = CameraZoom.INSTANCE.magnification;
+			if (magnification > CameraZoom.NOT_ZOOMED_MAGNIFICATION
 				&& CameraZoom.INSTANCE.coneIntersectsCircle(playerPos.x, playerPos.z, targetBlockPosX, targetBlockPosZ, targetBlockRadius))
 			{
-				blockDistance /= CameraZoom.INSTANCE.magnification;
+				this.zoomUsedThisPass = true;
+				blockDistance /= magnification;
 				
 				EDhApiMaxHorizontalResolution maxHorizontalResolution = Config.Client.Advanced.Graphics.Quality.maxHorizontalResolution.get();
 				return this.calcDetailLevelFromDistance(blockDistance, maxHorizontalResolution.detailLevel);
@@ -1530,12 +1542,12 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	//region sorting helpers
 
 	/** Manhattan distance to the tree's center, including the vertical distance for cubic positions */
-	private long getSortingDistance(long pos, DhBlockPos2D playerPos)
+	private long getSortingDistance(long pos, DhBlockPos2D playerPos, int playerBlockY)
 	{
 		long distance = DhSectionPos.getManhattanBlockDistance(pos, playerPos);
 		if (DhSectionPos.isCubic(pos))
 		{
-			distance += Math.abs((long) DhSectionPos.getCubicCenterBlockY(pos) - this.playerBlockY);
+			distance += Math.abs((long) DhSectionPos.getCubicCenterBlockY(pos) - playerBlockY);
 		}
 		return distance;
 	}
